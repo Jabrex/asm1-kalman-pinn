@@ -22,6 +22,10 @@ submission/
 asm1_cl-pinn/Publishing/
 asm1_cl-pinn/Seed Variance Plan.md
 
+# Turkish-language working notes (the public runbook is RUNBOOK.en.md)
+RUNBOOK.md
+CALISTIRMA_SIRASI.txt
+
 # One-off diagnostics that are not part of the pipeline
 scripts_diag/
 diagnostic_all.py

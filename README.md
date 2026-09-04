@@ -4,7 +4,7 @@ Synthetic-data study of a physics-informed neural network as a soft sensor for a
 activated-sludge plant, trained with a hierarchical curriculum and benchmarked
 against LSTM baselines.
 
-**To run it: see [RUNBOOK.md](RUNBOOK.md).** The pipeline has been executed
+**To run it: see [RUNBOOK.en.md](RUNBOOK.en.md).** The pipeline has been executed
 end-to-end; `results/` holds the generated datasets, all training runs
 (including the three-seed replication and the ablations), the benchmark tables
 and the figures reported in the accompanying manuscript. The RUNBOOK gives the
