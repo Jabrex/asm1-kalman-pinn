@@ -198,7 +198,11 @@ Two further judgement calls worth knowing about:
 
 ```
 asm1.xlsx            source workbook          read-only
-asm1_cl-pinn/        audited Obsidian vault   read-only
+asm1_cl-pinn/        audited parameter vault  read-only: data/asm1.json (+ schema),
+                                              the generated Markdown views that
+                                              verify_vault cross-checks, and the
+                                              Audit Report whose hash the loader
+                                              enforces (no editor settings)
 tools/               vault generator          read-only
 
 src/asm1/            vault loader, ASM1 kinetics, BSM1 plant, continuity
@@ -211,3 +215,9 @@ configs/base.yaml    shared run settings, expanded over the sweep
 tests/               unit tests, including the leakage invariants
 results/             generated data, runs, figures, benchmark tables
 ```
+
+---
+
+## Licence
+
+MIT, see [LICENSE](LICENSE).
