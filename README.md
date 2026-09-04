@@ -27,7 +27,10 @@ generated from `asm1.xlsx` and independently audited:
 | `data/asm1.json` | `06f7bfd5ce5703f5745cc0565858fc147012e68b3e28fdca64a126e6ed7074a2` |
 
 `src/asm1/vault_loader.py` verifies that hash on load and refuses to run on a
-mismatch. **No ASM1 parameter, stoichiometric coefficient or rate expression is
+mismatch. The pipeline needs only the shipped JSON. Regenerating the vault from
+`asm1.xlsx` (`tools/build_asm1_vault.py`) additionally needs Node and the
+`@oai/artifact-tool` package that `tools/extract_asm1_artifact.mjs` imports;
+`tools/tests` skips itself when those are not available. **No ASM1 parameter, stoichiometric coefficient or rate expression is
 hard-coded anywhere in this project** — the eight rate laws are compiled from the
 vault's own `code_expression` strings, so the ODE that generates the data and the
 physics term inside the PINN are literally the same audited text.

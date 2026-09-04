@@ -1,15 +1,38 @@
 import hashlib
 import json
+import os
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PYTHON = Path(r"C:\Users\musta\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe")
-NODE = Path(r"C:\Users\musta\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe")
-NODE_MODULES = Path(r"C:\Users\musta\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\node_modules")
+# The vault builder shells out to Python and to Node (for the .xlsx extractor).
+# Interpreters are taken from the environment so the test is machine-independent:
+#   ASM1_VAULT_PYTHON        defaults to the interpreter running the tests
+#   ASM1_VAULT_NODE          defaults to `node` on PATH
+#   ASM1_VAULT_NODE_MODULES  node_modules directory holding the extractor's
+#                            dependencies; defaults to tools/node_modules or
+#                            ./node_modules if either exists
+PYTHON = Path(os.environ.get("ASM1_VAULT_PYTHON", sys.executable))
+_node = os.environ.get("ASM1_VAULT_NODE") or shutil.which("node")
+NODE = Path(_node) if _node else None
+
+
+def _default_node_modules() -> Path | None:
+    explicit = os.environ.get("ASM1_VAULT_NODE_MODULES")
+    if explicit:
+        return Path(explicit)
+    for candidate in (ROOT / "tools" / "node_modules", ROOT / "node_modules"):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+NODE_MODULES = _default_node_modules()
 SOURCE = ROOT / "asm1.xlsx"
 EXPECTED_SOURCE_SHA256 = "dff2424c5fa1ed83846ebac7269ac3284317dc8799f18d7edaabb18d60ba892a"
 
@@ -40,6 +63,15 @@ STANDARDISED_RATES = [
 class ASM1VaultBuildTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if NODE is None:
+            raise unittest.SkipTest(
+                "node not found; set ASM1_VAULT_NODE or put `node` on PATH to run the vault build tests"
+            )
+        if NODE_MODULES is None:
+            raise unittest.SkipTest(
+                "node_modules for tools/extract_asm1_artifact.mjs not found; set "
+                "ASM1_VAULT_NODE_MODULES (or install the extractor's dependencies into tools/node_modules)"
+            )
         cls._tmp = tempfile.TemporaryDirectory(prefix="asm1-vault-test-")
         cls.output = Path(cls._tmp.name) / "vault"
         cls.source_hash_before = hashlib.sha256(SOURCE.read_bytes()).hexdigest()
