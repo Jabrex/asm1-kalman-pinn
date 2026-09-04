@@ -1,0 +1,45 @@
+# Single-axis curriculum ablations (revision experiment P1-4): each model name
+# keeps exactly one axis of the hierarchical schedule under the same budget.
+# Two noise levels bracket the clean and mid-noise regimes.
+
+models: [cl_pinn_wonly, cl_pinn_honly, cl_pinn_sonly, cl_pinn_smonly]
+noise_levels: [0.0, 0.10]
+seed: 0
+
+data_dir: results/raw
+out_dir: results/runs_ablation
+train_end_day: 12.0
+holdout_days: [12.0, 14.0]
+
+profile: full
+steps_quick: 4000
+steps_full: 20000
+collocation_points: 512
+
+lr: 1.0e-3
+lr_final_fraction: 0.02
+grad_clip: 1.0
+log_every: 100
+
+device: cuda
+dtype: float32
+
+pinn:
+  hidden_width: 128
+  hidden_depth: 5
+  activation: tanh
+  derivative_mode: forward
+  features:
+    periods: [1.0, 7.0]
+    harmonics: [4, 2]
+    include_influent: true
+
+lstm:
+  hidden_size: 128
+  num_layers: 2
+  bidirectional: false
+  dropout: 0.0
+  features:
+    periods: [1.0, 7.0]
+    harmonics: [4, 2]
+    include_influent: true

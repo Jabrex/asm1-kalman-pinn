@@ -1,0 +1,1207 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "asm1.schema.json",
+  "title": "ASM1 canonical model data",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source",
+    "notations",
+    "components",
+    "parameters",
+    "processes",
+    "matrices",
+    "continuity",
+    "kinetic_checking",
+    "named_ranges",
+    "source_anomalies",
+    "legacy_artifacts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "relative_to_vault",
+        "sha256",
+        "size_bytes",
+        "captured_utc",
+        "worksheet",
+        "used_range",
+        "formula_cells",
+        "calc_chain_count",
+        "formula_error_count",
+        "corrections_legend"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "relative_to_vault": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "size_bytes": {
+          "type": "integer"
+        },
+        "captured_utc": {
+          "type": "string"
+        },
+        "worksheet": {
+          "const": "Sheet1"
+        },
+        "used_range": {
+          "const": "A1:AC91"
+        },
+        "formula_cells": {
+          "type": "array",
+          "minItems": 56,
+          "maxItems": 56,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "cell",
+              "source_formula",
+              "formula_kind",
+              "shared_index",
+              "shared_master",
+              "evaluated_value"
+            ],
+            "properties": {
+              "cell": {
+                "type": "string"
+              },
+              "source_formula": {
+                "type": "string"
+              },
+              "formula_kind": {
+                "enum": [
+                  "normal",
+                  "shared_master",
+                  "shared_follower"
+                ]
+              },
+              "shared_index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "shared_master": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "evaluated_value": {
+                "type": [
+                  "string",
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "calc_chain_count": {
+          "const": 56
+        },
+        "formula_error_count": {
+          "const": 0
+        },
+        "corrections_legend": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source_text",
+              "color",
+              "indexed_color"
+            ],
+            "properties": {
+              "source_text": {
+                "type": "string"
+              },
+              "color": {
+                "type": "string"
+              },
+              "indexed_color": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    "notations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "original",
+        "standardised",
+        "continuity",
+        "alias_map",
+        "equivalence"
+      ],
+      "properties": {
+        "original": {
+          "type": "string"
+        },
+        "standardised": {
+          "type": "string"
+        },
+        "continuity": {
+          "type": "string"
+        },
+        "alias_map": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source_symbol",
+              "code_id"
+            ],
+            "properties": {
+              "source_symbol": {
+                "type": "string"
+              },
+              "code_id": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "equivalence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "corrected_matrix_mismatch_count",
+            "composition_matrix_mismatch_count",
+            "rate_expression_mismatch_count"
+          ],
+          "properties": {
+            "corrected_matrix_mismatch_count": {
+              "const": 0
+            },
+            "composition_matrix_mismatch_count": {
+              "const": 0
+            },
+            "rate_expression_mismatch_count": {
+              "const": 0
+            }
+          }
+        }
+      }
+    },
+    "components": {
+      "type": "array",
+      "minItems": 14,
+      "maxItems": 14,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "source_text",
+          "original_notation",
+          "standardised_notation",
+          "standardised_matrix_header",
+          "continuity_alias",
+          "code_id",
+          "aliases",
+          "description",
+          "unit",
+          "source_cell",
+          "standardised_notation_source_cell",
+          "standardised_matrix_header_source_cell",
+          "state_table_status"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "source_text": {
+            "type": "string"
+          },
+          "original_notation": {
+            "type": "string"
+          },
+          "standardised_notation": {
+            "type": "string"
+          },
+          "standardised_matrix_header": {
+            "type": "string"
+          },
+          "continuity_alias": {
+            "type": "string"
+          },
+          "code_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_cell": {
+            "type": "string"
+          },
+          "standardised_notation_source_cell": {
+            "type": "string"
+          },
+          "standardised_matrix_header_source_cell": {
+            "type": "string"
+          },
+          "state_table_status": {
+            "enum": [
+              "listed",
+              "added_term_not_listed"
+            ]
+          }
+        }
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stoichiometric",
+        "kinetic"
+      ],
+      "properties": {
+        "stoichiometric": {
+          "type": "array",
+          "minItems": 10,
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source_text",
+              "original_notation",
+              "standardised_notation",
+              "code_id",
+              "aliases",
+              "description",
+              "unit",
+              "source_cells",
+              "source_formula",
+              "evaluated_value"
+            ],
+            "properties": {
+              "source_text": {
+                "type": "string"
+              },
+              "original_notation": {
+                "type": "string"
+              },
+              "standardised_notation": {
+                "type": "string"
+              },
+              "code_id": {
+                "type": "string"
+              },
+              "aliases": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "description": {
+                "type": "string"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "source_cells": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "symbol",
+                  "value"
+                ],
+                "properties": {
+                  "symbol": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                }
+              },
+              "source_formula": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "evaluated_value": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "kinetic": {
+          "type": "array",
+          "minItems": 15,
+          "maxItems": 15,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source_text",
+              "original_notation",
+              "standardised_notation",
+              "code_id",
+              "aliases",
+              "description",
+              "unit",
+              "source_cells",
+              "source_formula",
+              "evaluated_value"
+            ],
+            "properties": {
+              "source_text": {
+                "type": "string"
+              },
+              "original_notation": {
+                "type": "string"
+              },
+              "standardised_notation": {
+                "type": "string"
+              },
+              "code_id": {
+                "type": "string"
+              },
+              "aliases": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "description": {
+                "type": "string"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "source_cells": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "symbol",
+                  "value"
+                ],
+                "properties": {
+                  "symbol": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                }
+              },
+              "source_formula": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "evaluated_value": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    },
+    "processes": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "process_id",
+          "name",
+          "source_cells",
+          "rates"
+        ],
+        "properties": {
+          "process_id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8
+          },
+          "name": {
+            "type": "string"
+          },
+          "source_cells": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "original",
+              "standardised"
+            ],
+            "properties": {
+              "original": {
+                "type": "string"
+              },
+              "standardised": {
+                "type": "string"
+              }
+            }
+          },
+          "rates": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "original",
+              "standardised"
+            ],
+            "properties": {
+              "original": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "source_text",
+                  "code_expression",
+                  "source_cell",
+                  "source_kind"
+                ],
+                "properties": {
+                  "source_text": {
+                    "type": "string"
+                  },
+                  "code_expression": {
+                    "type": "string"
+                  },
+                  "source_cell": {
+                    "type": "string"
+                  },
+                  "source_kind": {
+                    "const": "text_expression"
+                  }
+                }
+              },
+              "standardised": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "source_text",
+                  "code_expression",
+                  "source_cell",
+                  "source_kind"
+                ],
+                "properties": {
+                  "source_text": {
+                    "type": "string"
+                  },
+                  "code_expression": {
+                    "type": "string"
+                  },
+                  "source_cell": {
+                    "type": "string"
+                  },
+                  "source_kind": {
+                    "const": "text_expression"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "matrices": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "corrected_original",
+        "corrected_standardised",
+        "composition_original",
+        "composition_standardised",
+        "continuity_composition",
+        "numeric_stoichiometry"
+      ],
+      "properties": {
+        "corrected_original": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "row_labels",
+            "column_labels",
+            "cells",
+            "source_range"
+          ],
+          "properties": {
+            "row_labels": {
+              "type": "array",
+              "minItems": 8,
+              "maxItems": 8,
+              "items": {
+                "type": "string"
+              }
+            },
+            "column_labels": {
+              "type": "array",
+              "minItems": 14,
+              "maxItems": 14,
+              "items": {
+                "type": "string"
+              }
+            },
+            "cells": {
+              "type": "array",
+              "minItems": 8,
+              "maxItems": 8,
+              "items": {
+                "type": "array",
+                "minItems": 14,
+                "maxItems": 14,
+                "items": {
+                  "$ref": "#/definitions/matrixCell"
+                }
+              }
+            },
+            "source_range": {
+              "type": "string"
+            }
+          }
+        },
+        "corrected_standardised": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "row_labels",
+            "column_labels",
+            "cells",
+            "source_range"
+          ],
+          "properties": {
+            "row_labels": {
+              "type": "array",
+              "minItems": 8,
+              "maxItems": 8,
+              "items": {
+                "type": "string"
+              }
+            },
+            "column_labels": {
+              "type": "array",
+              "minItems": 14,
+              "maxItems": 14,
+              "items": {
+                "type": "string"
+              }
+            },
+            "cells": {
+              "type": "array",
+              "minItems": 8,
+              "maxItems": 8,
+              "items": {
+                "type": "array",
+                "minItems": 14,
+                "maxItems": 14,
+                "items": {
+                  "$ref": "#/definitions/matrixCell"
+                }
+              }
+            },
+            "source_range": {
+              "type": "string"
+            }
+          }
+        },
+        "composition_original": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "row_labels",
+            "column_labels",
+            "cells",
+            "source_range"
+          ],
+          "properties": {
+            "row_labels": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "string"
+              }
+            },
+            "column_labels": {
+              "type": "array",
+              "minItems": 14,
+              "maxItems": 14,
+              "items": {
+                "type": "string"
+              }
+            },
+            "cells": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "array",
+                "minItems": 14,
+                "maxItems": 14,
+                "items": {
+                  "$ref": "#/definitions/matrixCell"
+                }
+              }
+            },
+            "source_range": {
+              "type": "string"
+            }
+          }
+        },
+        "composition_standardised": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "row_labels",
+            "column_labels",
+            "cells",
+            "source_range"
+          ],
+          "properties": {
+            "row_labels": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "string"
+              }
+            },
+            "column_labels": {
+              "type": "array",
+              "minItems": 14,
+              "maxItems": 14,
+              "items": {
+                "type": "string"
+              }
+            },
+            "cells": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "array",
+                "minItems": 14,
+                "maxItems": 14,
+                "items": {
+                  "$ref": "#/definitions/matrixCell"
+                }
+              }
+            },
+            "source_range": {
+              "type": "string"
+            }
+          }
+        },
+        "continuity_composition": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "row_labels",
+            "column_labels",
+            "cells",
+            "source_range"
+          ],
+          "properties": {
+            "row_labels": {
+              "type": "array",
+              "minItems": 14,
+              "maxItems": 14,
+              "items": {
+                "type": "string"
+              }
+            },
+            "column_labels": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "string"
+              }
+            },
+            "cells": {
+              "type": "array",
+              "minItems": 14,
+              "maxItems": 14,
+              "items": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {
+                  "$ref": "#/definitions/matrixCell"
+                }
+              }
+            },
+            "source_range": {
+              "type": "string"
+            }
+          }
+        },
+        "numeric_stoichiometry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "row_labels",
+            "column_labels",
+            "cells",
+            "source_range"
+          ],
+          "properties": {
+            "row_labels": {
+              "type": "array",
+              "minItems": 8,
+              "maxItems": 8,
+              "items": {
+                "type": "string"
+              }
+            },
+            "column_labels": {
+              "type": "array",
+              "minItems": 14,
+              "maxItems": 14,
+              "items": {
+                "type": "string"
+              }
+            },
+            "cells": {
+              "type": "array",
+              "minItems": 8,
+              "maxItems": 8,
+              "items": {
+                "type": "array",
+                "minItems": 14,
+                "maxItems": 14,
+                "items": {
+                  "$ref": "#/definitions/matrixCell"
+                }
+              }
+            },
+            "source_range": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "continuity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "residuals",
+        "workbook_residuals",
+        "max_abs_residual",
+        "tolerance",
+        "passes",
+        "matches_workbook",
+        "calculation"
+      ],
+      "properties": {
+        "residuals": {
+          "type": "array",
+          "minItems": 8,
+          "maxItems": 8,
+          "items": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "workbook_residuals": {
+          "type": "array",
+          "minItems": 8,
+          "maxItems": 8,
+          "items": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "max_abs_residual": {
+          "type": "number",
+          "maximum": 1e-15
+        },
+        "tolerance": {
+          "const": 1e-15
+        },
+        "passes": {
+          "const": true
+        },
+        "matches_workbook": {
+          "const": true
+        },
+        "calculation": {
+          "type": "string"
+        }
+      }
+    },
+    "kinetic_checking": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "row_labels",
+        "column_labels",
+        "cells",
+        "category_counts",
+        "starred_missing_terms",
+        "source_range",
+        "legend"
+      ],
+      "properties": {
+        "row_labels": {
+          "type": "array",
+          "minItems": 8,
+          "maxItems": 8,
+          "items": {
+            "type": "string"
+          }
+        },
+        "column_labels": {
+          "type": "array",
+          "minItems": 14,
+          "maxItems": 14,
+          "items": {
+            "type": "string"
+          }
+        },
+        "cells": {
+          "type": "array",
+          "minItems": 8,
+          "maxItems": 8,
+          "items": {
+            "type": "array",
+            "minItems": 14,
+            "maxItems": 14,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "category",
+                "color",
+                "marker",
+                "source_cell"
+              ],
+              "properties": {
+                "category": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "color": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "marker": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "source_cell": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "category_counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "consumed",
+            "biomass",
+            "other_required",
+            "inhibitory"
+          ],
+          "properties": {
+            "consumed": {
+              "const": 13
+            },
+            "biomass": {
+              "const": 8
+            },
+            "other_required": {
+              "const": 4
+            },
+            "inhibitory": {
+              "const": 1
+            }
+          }
+        },
+        "starred_missing_terms": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "enum": [
+              "X82",
+              "X84"
+            ]
+          }
+        },
+        "source_range": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "category",
+              "color",
+              "component_function",
+              "rate_consequence"
+            ],
+            "properties": {
+              "category": {
+                "enum": [
+                  "consumed",
+                  "biomass",
+                  "other_required",
+                  "inhibitory"
+                ]
+              },
+              "color": {
+                "type": "string"
+              },
+              "component_function": {
+                "type": "string"
+              },
+              "rate_consequence": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "named_ranges": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "scope",
+          "formula",
+          "source_cell",
+          "evaluated_value",
+          "code_id"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "formula": {
+            "type": "string"
+          },
+          "source_cell": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evaluated_value": {
+            "type": [
+              "string",
+              "number",
+              "null"
+            ]
+          },
+          "code_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "source_anomalies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "source_text",
+          "source_cells",
+          "handling"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "source_text": {
+            "type": "string"
+          },
+          "source_cells": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "handling": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "legacy_artifacts": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "program_id",
+          "shape_id",
+          "relationship_id",
+          "archive_path",
+          "size_bytes",
+          "sha256",
+          "anchor_cell",
+          "width",
+          "height",
+          "data_role"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "program_id": {
+            "const": "Equation.3"
+          },
+          "shape_id": {
+            "type": "string"
+          },
+          "relationship_id": {
+            "type": "string"
+          },
+          "archive_path": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "anchor_cell": {
+            "const": "Y73"
+          },
+          "width": {
+            "const": 0
+          },
+          "height": {
+            "const": 0
+          },
+          "data_role": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "matrixCell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_cell",
+        "effective_coefficient",
+        "code_expression",
+        "evaluated_value",
+        "source_cell",
+        "source_formula"
+      ],
+      "properties": {
+        "raw_cell": {
+          "type": [
+            "string",
+            "number",
+            "null"
+          ]
+        },
+        "effective_coefficient": {
+          "type": [
+            "string",
+            "number"
+          ]
+        },
+        "code_expression": {
+          "type": [
+            "string",
+            "number"
+          ]
+        },
+        "evaluated_value": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "source_cell": {
+          "type": "string"
+        },
+        "source_formula": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

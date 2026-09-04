@@ -1,0 +1,46 @@
+# Seed replication 1 of the two PINN rows (revision experiment P1-1).
+# Identical to base.yaml except: models restricted to the PINN pair, seed, and
+# a separate out_dir (run ids do not carry the seed, so sharing out_dir with
+# the seed-0 sweep would overwrite it).
+
+models: [cl_pinn, pinn]
+noise_levels: [0.0, 0.05, 0.10, 0.15]
+seed: 1
+
+data_dir: results/raw
+out_dir: results/runs_seed1
+train_end_day: 12.0
+holdout_days: [12.0, 14.0]
+
+profile: full
+steps_quick: 4000
+steps_full: 20000
+collocation_points: 512
+
+lr: 1.0e-3
+lr_final_fraction: 0.02
+grad_clip: 1.0
+log_every: 100
+
+device: cuda
+dtype: float32
+
+pinn:
+  hidden_width: 128
+  hidden_depth: 5
+  activation: tanh
+  derivative_mode: forward
+  features:
+    periods: [1.0, 7.0]
+    harmonics: [4, 2]
+    include_influent: true
+
+lstm:
+  hidden_size: 128
+  num_layers: 2
+  bidirectional: false
+  dropout: 0.0
+  features:
+    periods: [1.0, 7.0]
+    harmonics: [4, 2]
+    include_influent: true

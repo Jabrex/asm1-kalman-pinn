@@ -1,0 +1,39 @@
+# Environments and caches
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor / agent state
+.claude/
+.obsidian/
+.vscode/
+.idea/
+docs/superpowers/
+
+# Manuscript and journal submission (not part of the code + data archive)
+paper/
+submission/
+
+# Internal planning and publishing notes inside the Obsidian vault
+asm1_cl-pinn/Publishing/
+asm1_cl-pinn/Seed Variance Plan.md
+
+# One-off diagnostics that are not part of the pipeline
+scripts_diag/
+diagnostic_all.py
+test_diag.py
+
+# LaTeX and OS by-products
+*.aux
+*.log
+*.out
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+Thumbs.db
+.DS_Store

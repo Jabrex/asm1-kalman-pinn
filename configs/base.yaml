@@ -1,0 +1,62 @@
+# Shared settings for every benchmark run.
+#
+# scripts/run_all.py expands this over the model list and the noise sweep to
+# produce the 16 runs (4 models x 4 noise levels) and writes each resolved
+# config into its run directory for provenance.
+#
+# The four models differ ONLY in two flags, resolved from the model name in
+# src/train/run.py:MODEL_SPECS - architecture and curriculum. Everything below is
+# shared, so the comparison isolates the physics term and the curriculum.
+
+# --- sweep ----------------------------------------------------------------
+models: [cl_pinn, pinn, cl_lstm, lstm]
+noise_levels: [0.0, 0.05, 0.10, 0.15]
+seed: 0
+
+# --- data -----------------------------------------------------------------
+data_dir: results/raw
+out_dir: results/runs
+train_end_day: 12.0        # training window; days 12-14 are the holdout
+holdout_days: [12.0, 14.0]
+
+# --- budget ---------------------------------------------------------------
+# quick: end-to-end pipeline check. full: the reported benchmark.
+# Both curriculum and no-curriculum runs get the identical total step budget,
+# so any difference comes from ordering rather than compute.
+profile: quick
+steps_quick: 4000
+steps_full: 20000
+collocation_points: 512
+
+# --- optimisation ---------------------------------------------------------
+lr: 1.0e-3
+lr_final_fraction: 0.02    # cosine decay floor, as a fraction of lr
+grad_clip: 1.0
+log_every: 100
+
+# --- runtime --------------------------------------------------------------
+# float32 is the default: the RTX 4050 runs float64 at roughly 1/60 the rate.
+# Switch to float64 if a run shows residual noise at the machine-precision floor.
+device: cuda
+dtype: float32
+
+# --- architectures --------------------------------------------------------
+pinn:
+  hidden_width: 128
+  hidden_depth: 5
+  activation: tanh
+  derivative_mode: forward   # verified against finite differences in step 6
+  features:
+    periods: [1.0, 7.0]      # the periods the influent generator actually has
+    harmonics: [4, 2]
+    include_influent: true
+
+lstm:
+  hidden_size: 128
+  num_layers: 2
+  bidirectional: false
+  dropout: 0.0
+  features:
+    periods: [1.0, 7.0]
+    harmonics: [4, 2]
+    include_influent: true

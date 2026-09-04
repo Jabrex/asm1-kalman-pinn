@@ -1,0 +1,47 @@
+# IC-anchor ablation (revision experiment P1-3): the initial-condition loss is
+# restricted to the six directly sensed (tank, component) entries, removing the
+# one-time full-state anchor at t = 0. The output-head scale still derives from
+# the supplied Z(0); the paper discloses this.
+
+models: [cl_pinn]
+noise_levels: [0.0, 0.10]
+seed: 0
+ic_measured_only: true
+
+data_dir: results/raw
+out_dir: results/runs_icmask
+train_end_day: 12.0
+holdout_days: [12.0, 14.0]
+
+profile: full
+steps_quick: 4000
+steps_full: 20000
+collocation_points: 512
+
+lr: 1.0e-3
+lr_final_fraction: 0.02
+grad_clip: 1.0
+log_every: 100
+
+device: cuda
+dtype: float32
+
+pinn:
+  hidden_width: 128
+  hidden_depth: 5
+  activation: tanh
+  derivative_mode: forward
+  features:
+    periods: [1.0, 7.0]
+    harmonics: [4, 2]
+    include_influent: true
+
+lstm:
+  hidden_size: 128
+  num_layers: 2
+  bidirectional: false
+  dropout: 0.0
+  features:
+    periods: [1.0, 7.0]
+    harmonics: [4, 2]
+    include_influent: true
