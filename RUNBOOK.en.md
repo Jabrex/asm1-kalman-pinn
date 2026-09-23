@@ -401,7 +401,7 @@ python -m scripts.seed_bands            # results/seed_bands.json, results/figur
 Paper figures and the per-component / per-tank tables:
 
 ```bash
-python -m scripts.split_loss_curves     # results/figures/loss_curves_pinn.*, loss_curves_lstm.*
+python -m scripts.split_loss_curves     # results/figures/loss_curves_stacked.* (Fig. 5), loss_curves_pinn.*, loss_curves_lstm.*
 python -m scripts.component_results     # results/component_table.{json,tex}, per_tank_heatmap.*, trajectories_trackB.*
 python -m scripts.dump_kinetics         # prints the vault's rate expressions and stoichiometry (appendix table)
 ```
