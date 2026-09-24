@@ -49,8 +49,12 @@ def _cols(ds):
 
 @pytest.fixture(scope="module")
 def model():
+    # One thread for the filter tests; restored afterwards because later modules
+    # (the v1.0 fingerprint in test_total_derivative) depend on the default count.
+    threads = torch.get_num_threads()
     torch.set_num_threads(1)
-    return ReducedPlantModel()
+    yield ReducedPlantModel()
+    torch.set_num_threads(threads)
 
 
 @pytest.fixture(scope="module")
