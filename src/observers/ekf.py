@@ -15,7 +15,9 @@ from ..data.sensors import SensorChannel
 from ..models.losses import ObservationOperator
 from .reduced_model import InputSeries, ReducedPlantModel, Z_FLOOR
 
-Q_GRID: tuple[float, ...] = (0.003, 0.01, 0.03, 0.1, 0.3)  # per sqrt(day), log units
+# per sqrt(day), log units. Extended to 3.0 at gate D4 (2026-09-24): on the original five
+# points the innovation optimum sat on the edge; on seven it is interior at (0.3, 0.3).
+Q_GRID: tuple[float, ...] = (0.003, 0.01, 0.03, 0.1, 0.3, 1.0, 3.0)
 MAD_TO_SD = 1.4826
 Q_CRITERIA = ("innovation", "predictive")
 
