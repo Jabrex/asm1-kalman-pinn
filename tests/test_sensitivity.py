@@ -289,3 +289,52 @@ def test_finite_difference_jacobian_schemes_on_a_kink():
     assert fwd[0, 0] == pytest.approx(0.0, abs=1e-6)
     assert bwd[0, 0] == pytest.approx(1.0, rel=1e-6)
     assert fwd[1] == pytest.approx([3.0, 1.0], rel=1e-5)
+
+
+# -- Task 4.4: identifiability, classes, ideal settler, leakage guard --------------
+def test_collinearity_index_hand_example():
+    # unit columns (1, 1)/sqrt(2) and (0, 1): Gram [[1, c], [c, 1]] with c = 1/sqrt(2)
+    s = np.array([[1.0, 0.0], [1.0, 1.0]])
+    assert sens.collinearity_index(s) == pytest.approx(1.0 / np.sqrt(1.0 - 1.0 / np.sqrt(2.0)), rel=1e-12)
+    assert sens.collinearity_index(np.eye(3)) == pytest.approx(1.0)
+    assert sens.collinearity_index(np.array([[1.0, 2.0], [2.0, 4.0 + 1e-9]])) > 1e3
+
+
+def test_d_optimal_subset_skips_collinear_pairs():
+    s = np.array([[100.0, 100.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 1.0]])
+    f = s.T @ s
+    out = sens.d_optimal_subset(f, k=2, max_ci=20.0, names=["a", "b", "c"])
+    assert np.linalg.slogdet(f[:2, :2])[1] > max(row["logdet"] for row in out["ranking"])
+    assert out["best"]["names"] == ["b", "c"]            # (a, b) has the largest det but CI near 71
+    assert out["n_admissible"] == 2 and out["n_candidates"] == 3
+
+
+def test_classify_states_rule_order():
+    ig = np.array([[0.6, 0.2, 0.2, 0.2, 0.5, 0.2, 0.1]])
+    tau = np.array([[10.0, 7.0, 0.5, 3.0, 0.5, 6.0, np.inf]])
+    share = np.array([[0.9, 0.9, 0.8, 0.8, 0.9, 0.9, 0.0]])
+    assert list(sens.classify_states(ig, tau, share)[0]) == [
+        "sensor-recoverable", "anchor-carried", "forcing-slaved", "partly recoverable",
+        "sensor-recoverable", "partly recoverable", "anchor-carried",
+    ]
+
+
+def test_ideal_settler_jacobian_matches_central_differences(model, dry):
+    from src.asm1.plant import Bsm1Plant
+
+    ideal = sens.IdealSettlerModel(model, Bsm1Plant())
+    x = np.log(dry.truth_reactor[0].reshape(-1))
+    q, zin = float(dry.q_in[0]), dry.z_in[0]
+    h = 1e-6
+    fd = np.stack([(ideal.rhs_log(x + h * e, q, zin) - ideal.rhs_log(x - h * e, q, zin)).reshape(-1) / (2 * h)
+                   for e in np.eye(70)], axis=1)
+    j_x, b_ras, _, _ = ideal.jacobians(x, q, zin)
+    assert _rel(j_x, fd) < 1e-6
+    assert np.all(b_ras == 0.0)
+
+
+def test_sensitivity_module_never_names_truth():
+    source = (REPO / "src" / "observers" / "sensitivity.py").read_text(encoding="utf-8")
+    names = {tok.string for tok in tokenize.generate_tokens(io.StringIO(source).readline)
+             if tok.type == tokenize.NAME}
+    assert not names & {"truth_reactor", "truth_y", "obs_clean", "truth_plants"}

@@ -458,3 +458,152 @@ def forcing_share(tl: TangentLinear, p0: np.ndarray, zin_rel_sd: float = 0.10,
     vf, vi = var_forcing.mean(axis=0), var_initial.mean(axis=0)
     share = np.where(vf + vi > 0.0, vf / np.maximum(vf + vi, 1e-300), 0.0)
     return {"share": share.reshape(N_TANKS, -1), "var_forcing": var_forcing, "var_initial": var_initial}
+
+
+# -- kinetic identifiability ----------------------------------------------------
+#: Pre-registered class thresholds (strategic plan section 5; frozen at gate D4).
+CLASS_RULES: Mapping[str, float] = {
+    "ig_sensor": 0.5,          # sensor-recoverable if IG >= 0.5
+    "tau_anchor_days": 6.0,    # anchor-carried if tau > 6 d and IG < 0.5
+    "share_forcing": 0.5,      # forcing-slaved if forcing share > 0.5 and tau < 1 d
+    "tau_forcing_days": 1.0,
+}
+CLASS_NAMES = ("sensor-recoverable", "anchor-carried", "forcing-slaved", "partly recoverable")
+
+
+def steady_state_parameter_sensitivity(model: Any, z_ss: np.ndarray,
+                                       u_ss: tuple[float, np.ndarray, float],
+                                       params: Mapping[str, float]) -> np.ndarray:
+    """``d x_ss / d log theta = -J^-1 B_theta`` at a steady state; ``(70, p)``."""
+    q, zin, tss = u_ss
+    x = np.log(np.clip(np.asarray(z_ss, dtype=float).reshape(-1), 1e-12, None))
+    j_x, _b, _bz, b_theta = model.jacobians(x, float(q), np.asarray(zin, dtype=float), float(tss),
+                                            params=dict(params))
+    return -np.linalg.solve(_np(j_x), _np(b_theta).reshape(N_STATE, len(params)))
+
+
+def parameter_sensitivity(model: Any, x_traj: np.ndarray, u_traj: InputTrajectory, t: np.ndarray,
+                          params: Mapping[str, float], h_rows: np.ndarray, r: np.ndarray,
+                          substeps: int = DEFAULT_SUBSTEPS,
+                          x0_sensitivity: np.ndarray | None = None) -> dict[str, Any]:
+    """Noise-whitened output sensitivities to log kinetic multipliers.
+
+    Returns ``s_theta`` ``(n*m, p)`` and ``s_x0`` ``(n*m, 70)`` (the same rows
+    for the initial log state), plus the cumulative propagators. Parameter
+    Jacobians come from the model's autograd ``B_theta`` through ``params``
+    overrides. ``x0_sensitivity`` ``(70, p)`` couples the initial state to the
+    parameters (plant at its own steady state before day 0); ``None`` keeps the
+    initial state fixed.
+    """
+    tl = tangent_linear(model, x_traj, u_traj, t, substeps=substeps, inputs="theta", params=params)
+    m = cumulative_propagators(tl.phis)
+    g = cumulative_input_response(tl.phis, tl.gammas)
+    if x0_sensitivity is not None:
+        g = g + m @ np.asarray(x0_sensitivity, dtype=float)
+    w = 1.0 / np.sqrt(np.asarray(r, dtype=float))
+    s_theta = np.einsum("kjn,knp->kjp", h_rows, g) * w[None, :, None]
+    s_x0 = np.einsum("kjn,knm->kjm", h_rows, m) * w[None, :, None]
+    return {"names": tl.input_names, "s_theta": s_theta.reshape(-1, len(tl.input_names)),
+            "s_x0": s_x0.reshape(-1, N_STATE), "cumulative": m}
+
+
+def marginal_parameter_fisher(s_theta: np.ndarray, s_x0: np.ndarray, p0: np.ndarray) -> np.ndarray:
+    """Parameter information after marginalising the initial state (Schur complement)."""
+    f_tt = s_theta.T @ s_theta
+    f_tx = s_theta.T @ s_x0
+    info_x = s_x0.T @ s_x0 + np.diag(1.0 / prior_variance(p0))
+    f = f_tt - f_tx @ cho_solve(cho_factor(0.5 * (info_x + info_x.T)), f_tx.T)
+    return 0.5 * (f + f.T)
+
+
+def _ci_from_gram(gram: np.ndarray) -> float:
+    d = np.sqrt(np.clip(np.diag(gram), 0.0, None))
+    if np.any(d <= 0.0):
+        return float("inf")
+    lam = float(np.linalg.eigvalsh(gram / np.outer(d, d)).min())
+    return float("inf") if lam <= 0.0 else float(1.0 / np.sqrt(lam))
+
+
+def collinearity_index(s: np.ndarray) -> float:
+    """Brun et al. (2002): ``1 / sqrt(min eig(S_n^T S_n))``, unit-length columns."""
+    s = np.asarray(s, dtype=float)
+    return _ci_from_gram(s.T @ s)
+
+
+def d_optimal_subset(f_theta: np.ndarray, k: int = 4, max_ci: float = 20.0,
+                     names: Sequence[str] | None = None, ci_gram: np.ndarray | None = None,
+                     top: int = 20) -> dict[str, Any]:
+    """Subset of ``k`` parameters maximising ``log det F_K`` with ``CI_K < max_ci``.
+
+    ``ci_gram`` (default ``f_theta``) supplies the collinearity index; pass
+    ``S^T S`` of the raw output sensitivities to get Brun's index exactly.
+    """
+    f = np.asarray(f_theta, dtype=float)
+    p = f.shape[0]
+    names = list(names) if names is not None else ["p%d" % i for i in range(p)]
+    gram = f if ci_gram is None else np.asarray(ci_gram, dtype=float)
+    rows = []
+    for combo in itertools.combinations(range(p), k):
+        idx = list(combo)
+        sign, logdet = np.linalg.slogdet(f[np.ix_(idx, idx)])
+        rows.append({"names": [names[i] for i in idx], "indices": idx,
+                     "logdet": float(logdet) if sign > 0 else float("-inf"),
+                     "ci": _ci_from_gram(gram[np.ix_(idx, idx)])})
+    admissible = [row for row in rows if row["ci"] < max_ci and np.isfinite(row["logdet"])]
+    if not admissible:
+        raise ValueError("no %d-parameter subset has a collinearity index below %.1f" % (k, max_ci))
+    best = max(admissible, key=lambda row: row["logdet"])
+    ranked = sorted(admissible, key=lambda row: -row["logdet"])[:top]
+    return {"best": best, "ranking": ranked, "n_admissible": len(admissible), "n_candidates": len(rows)}
+
+
+# -- classification and the ideal-settler variant -----------------------------
+def classify_states(ig: np.ndarray, tau: np.ndarray, share: np.ndarray,
+                    rules: Mapping[str, float] = CLASS_RULES) -> np.ndarray:
+    """Pre-registered class per (tank, component), rules applied in order."""
+    ig, tau, share = (np.asarray(a, dtype=float) for a in (ig, tau, share))
+    out = np.full(ig.shape, CLASS_NAMES[3], dtype=object)
+    forcing = (share > rules["share_forcing"]) & (tau < rules["tau_forcing_days"])
+    out[forcing] = CLASS_NAMES[2]
+    anchor = (tau > rules["tau_anchor_days"]) & (ig < rules["ig_sensor"])
+    out[anchor] = CLASS_NAMES[1]
+    out[ig >= rules["ig_sensor"]] = CLASS_NAMES[0]
+    return out
+
+
+class IdealSettlerModel:
+    """Reduced model whose RAS TSS comes from an ideal clarifier, not a sensor.
+
+    ``TSS_ras = TSS_5 (Q_in + Q_r) / (Q_r + Q_w)`` is the solids balance of a
+    clarifier with no storage and solids-free effluent. The measured RAS input
+    passed by callers is ignored. The Jacobian adds the chain-rule term
+    ``B_ras (d TSS_ras / d x)``.
+    """
+
+    def __init__(self, base: Any, plant: Bsm1Plant) -> None:
+        self.base = base
+        cfg = plant.cfg
+        self._q_r, self._q_w, self._factor = float(cfg.q_r), float(cfg.q_w), float(cfg.tss_factor)
+        self._cols = np.array([(cfg.n_tanks - 1) * plant.n_components + int(i) for i in plant.i_tss])
+
+    def _gain(self, q: float) -> float:
+        return (float(q) + self._q_r) / (self._q_r + self._q_w)
+
+    def tss_ras(self, x70: np.ndarray, q: float) -> float:
+        x = np.asarray(x70, dtype=float).reshape(-1)
+        return self._gain(q) * self._factor * float(np.exp(x[self._cols]).sum())
+
+    def rhs_log(self, x70: np.ndarray, q: float, zin: np.ndarray, tss: float | None = None,
+                params: Mapping[str, float] | None = None) -> np.ndarray:
+        return _np(self.base.rhs_log(x70, q, zin, self.tss_ras(x70, q), params=params))
+
+    def jacobians(self, x70: np.ndarray, q: float, zin: np.ndarray, tss: float | None = None,
+                  params: Mapping[str, float] | None = None):
+        x = np.asarray(x70, dtype=float).reshape(-1)
+        j_x, b_ras, b_zin, b_theta = (
+            _np(a) for a in self.base.jacobians(x, q, zin, self.tss_ras(x, q), params=params)
+        )
+        d_ras = np.zeros(x.size)
+        d_ras[self._cols] = self._gain(q) * self._factor * np.exp(x[self._cols])
+        b_ras = b_ras.reshape(-1, 1)
+        return j_x + b_ras @ d_ras[None, :], np.zeros_like(b_ras), b_zin, b_theta
