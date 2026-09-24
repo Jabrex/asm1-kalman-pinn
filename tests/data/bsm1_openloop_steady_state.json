@@ -124,7 +124,7 @@
   "parameter_check": {
     "table": "Table 2: Stoichiometric parameters; Table 3: Kinetic parameters (section 2.2.4, values correspond approximately to 15 C)",
     "page": "7",
-    "checked_by": "Claude (Anthropic), machine transcription from the official report PDF (https://www2.iea.lth.se/publications/Reports/LTH-IEA-7229.pdf, SHA-256 30828bc11496fb6d9801c1b53c4c62cb27b2274f831938fee4087c14b00e901a), source located via Consensus, 2026-09-24; independently re-checked, see checked_by",
+    "checked_by": "Claude (Anthropic), machine transcription from the official report PDF (https://www2.iea.lth.se/publications/Reports/LTH-IEA-7229.pdf, SHA-256 30828bc11496fb6d9801c1b53c4c62cb27b2274f831938fee4087c14b00e901a), source located via Consensus, 2026-09-24; re-checked on 2026-09-24 by PyMuPDF text extraction of Table 2 and Table 3 (p. 7), 19/19 identical",
     "values": {
       "YA": 0.24,
       "YH": 0.67,
