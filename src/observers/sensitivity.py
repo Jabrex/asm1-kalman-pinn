@@ -88,6 +88,7 @@ def tangent_linear(
     inputs: str = "none",
     params: Mapping[str, float] | None = None,
     input_names: Sequence[str] = (),
+    drift: str = "model",
 ) -> TangentLinear:
     """Propagators of the linearised reduced model along ``x_traj``.
 
@@ -96,7 +97,17 @@ def tangent_linear(
     ``inputs``: ``"none"``; ``"zin_rel"`` (relative perturbation of each of the
     14 influent components, ``B_zin * z_in``); or ``"theta"`` (log multipliers
     on ``params``, in ``params`` order).
+
+    ``drift`` fixes the diagonal of the log-state Jacobian, ``-d(log z)/dt``:
+    ``"model"`` takes it from the model's own field ``f(z)/z`` (exact when
+    ``x_traj`` solves the model); ``"trajectory"`` takes it from the spline
+    derivative of ``x_traj``. Use ``"trajectory"`` when the model is linearised
+    along a trajectory it does not follow (another plant's kinetics): absolute
+    perturbations then obey ``d(dz)/dt = J(z) dz`` exactly, and a mass-neutral
+    shift between inert fractions stays invisible, as it should.
     """
+    if drift not in ("model", "trajectory"):
+        raise ValueError("drift must be 'model' or 'trajectory', not %r" % (drift,))
     if inputs not in ("none", "zin_rel", "theta"):
         raise ValueError("inputs must be 'none', 'zin_rel' or 'theta', not %r" % (inputs,))
     if inputs == "theta" and not params:
@@ -114,12 +125,17 @@ def tangent_linear(
     p = len(names)
     d = N_STATE + p
     spline = CubicSpline(t, x_traj, axis=0)
+    slope = spline.derivative() if drift == "trajectory" else None
 
     def generator(tt: float) -> np.ndarray:
         q, zin, tss = u_traj.at(t, tt)
-        j_x, _b_ras, b_zin, b_theta = model.jacobians(spline(tt), q, zin, tss, params=call_params)
+        x = spline(tt)
+        j_x, _b_ras, b_zin, b_theta = model.jacobians(x, q, zin, tss, params=call_params)
         a = np.zeros((d, d))
         a[:N_STATE, :N_STATE] = _np(j_x)
+        if slope is not None:
+            g = _np(model.rhs_log(x, q, zin, tss, params=call_params)).reshape(-1)
+            a[:N_STATE, :N_STATE] += np.diag(g - slope(tt))
         if inputs == "zin_rel":
             a[:N_STATE, N_STATE:] = _np(b_zin).reshape(N_STATE, -1) * zin[None, :]
         elif inputs == "theta":
@@ -485,7 +501,8 @@ def steady_state_parameter_sensitivity(model: Any, z_ss: np.ndarray,
 def parameter_sensitivity(model: Any, x_traj: np.ndarray, u_traj: InputTrajectory, t: np.ndarray,
                           params: Mapping[str, float], h_rows: np.ndarray, r: np.ndarray,
                           substeps: int = DEFAULT_SUBSTEPS,
-                          x0_sensitivity: np.ndarray | None = None) -> dict[str, Any]:
+                          x0_sensitivity: np.ndarray | None = None,
+                          drift: str = "model") -> dict[str, Any]:
     """Noise-whitened output sensitivities to log kinetic multipliers.
 
     Returns ``s_theta`` ``(n*m, p)`` and ``s_x0`` ``(n*m, 70)`` (the same rows
@@ -495,7 +512,8 @@ def parameter_sensitivity(model: Any, x_traj: np.ndarray, u_traj: InputTrajector
     parameters (plant at its own steady state before day 0); ``None`` keeps the
     initial state fixed.
     """
-    tl = tangent_linear(model, x_traj, u_traj, t, substeps=substeps, inputs="theta", params=params)
+    tl = tangent_linear(model, x_traj, u_traj, t, substeps=substeps, inputs="theta", params=params,
+                        drift=drift)
     m = cumulative_propagators(tl.phis)
     g = cumulative_input_response(tl.phis, tl.gammas)
     if x0_sensitivity is not None:

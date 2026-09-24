@@ -338,3 +338,27 @@ def test_sensitivity_module_never_names_truth():
     names = {tok.string for tok in tokenize.generate_tokens(io.StringIO(source).readline)
              if tok.type == tokenize.NAME}
     assert not names & {"truth_reactor", "truth_y", "obs_clean", "truth_plants"}
+
+
+def test_trajectory_drift_keeps_a_mass_neutral_inert_shift_invisible(model, day):
+    """Linearising the nominal model along another plant's trajectory (G4 fix, 2026-09-24).
+
+    With the model's own f/z on the log-Jacobian diagonal, a trajectory made with other
+    kinetics lets TSS "see" a mass-neutral X_I <-> X_P shift (measured 1.3e-4 of the sum's
+    information); with the trajectory's own log-slope it stays at round-off (4e-15).
+    """
+    v = vault()
+    other = {"bH": 0.5 * v.p("bH"), "muH": 0.7 * v.p("muH")}
+    x = day["solve"](day["x0"], params=other)
+    z = np.exp(x).reshape(ONE_DAY, 5, 14)
+    tss = [c for c in TARGET_CHANNELS if c.kind == "tss_reactor"]
+    h = sens.log_measurement_rows(z, tss, v.components)
+    u_sum, u_split = sens.sum_split_directions(z[0], v.components)
+    ratio = {}
+    for drift in ("model", "trajectory"):
+        m = sens.cumulative_propagators(sens.tangent_linear(model, x, day["u"], day["t"], drift=drift).phis)
+        f = sens.channel_fisher(None, h[:, 0], 0.01, cumulative=m)
+        ratio[drift] = (u_split @ f @ u_split) / (u_sum @ f @ u_sum)
+    assert ratio["trajectory"] < 1e-10 < 1e-6 < ratio["model"]
+    with pytest.raises(ValueError):
+        sens.tangent_linear(model, x, day["u"], day["t"], drift="spline")
