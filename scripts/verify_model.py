@@ -55,6 +55,9 @@ def _trainer(model: str = "cl_pinn", steps: int = PROBE_STEPS, total_derivative:
         dtype="float64",
         device="cpu",
         total_derivative=total_derivative,
+        # Probe runs are scratch output: keep them out of results/runs, whose
+        # _verify_* directories are the archived v1.0 artefacts.
+        out_dir="results/v11/_verify",
     )
     return Trainer(cfg)
 
