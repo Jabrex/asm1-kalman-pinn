@@ -143,6 +143,110 @@ def track_summary(metrics: StateMetrics) -> dict[str, dict[str, float]]:
     }
 
 
+# --- v1.1 decision metrics --------------------------------------------------
+# All take the same (n, 5, 14) truth/prediction arrays as state_metrics; none of
+# them changes the v1.0 definitions above.
+
+def skill_score(err, err_ref):
+    """Skill against a reference: ``1 - err / err_ref`` (1 perfect, 0 no better, < 0 worse)."""
+    err = np.asarray(err, dtype=float)
+    err_ref = np.asarray(err_ref, dtype=float)
+    return 1.0 - _safe_divide(err, err_ref)
+
+
+def gap_closed(err, err_persist, err_ref):
+    """Fraction of the persistence-to-reference gap closed:
+    ``(err_persist - err) / (err_persist - err_ref)``. 1 matches the reference,
+    0 matches persistence; undefined (NaN) when the two references coincide."""
+    err = np.asarray(err, dtype=float)
+    err_persist = np.asarray(err_persist, dtype=float)
+    err_ref = np.asarray(err_ref, dtype=float)
+    return _safe_divide(err_persist - err, err_persist - err_ref)
+
+
+def level_error(truth: np.ndarray, pred: np.ndarray) -> np.ndarray:
+    """Per-component RMSE relative to the mean level, ``(14,)``, pooled over tanks.
+
+    Unlike the range-normalised NRMSE this reads as "percent of the typical
+    concentration", which is the scale an operator uses for inventories such as
+    X_B_H or X_B_A.
+    """
+    truth = np.asarray(truth, dtype=float)
+    pred = np.asarray(pred, dtype=float)
+    n_comp = truth.shape[-1]
+    flat_t = truth.reshape(-1, n_comp)
+    flat_p = pred.reshape(-1, n_comp)
+    rmse = np.sqrt(np.mean((flat_p - flat_t) ** 2, axis=0))
+    return _safe_divide(rmse, np.mean(np.abs(flat_t), axis=0))
+
+
+def tank_mean(z: np.ndarray, volumes=None) -> np.ndarray:
+    """Volume-weighted mean over the tanks: ``(n, 5, 14) -> (n, 14)``."""
+    from ..asm1.plant import Bsm1Config
+
+    vol = np.asarray(Bsm1Config().volumes if volumes is None else volumes, dtype=float)
+    return np.einsum("ntc,t->nc", np.asarray(z, dtype=float), vol) / vol.sum()
+
+
+def within_tolerance_fraction(
+    truth: np.ndarray,
+    pred: np.ndarray,
+    components: tuple[str, ...] = ("X_B_H", "X_B_A"),
+    rel_tol: float = 0.10,
+) -> dict[str, float]:
+    """Share of samples whose plant-wide (volume-weighted) mean is within ``rel_tol``.
+
+    Returns ``{component: fraction in [0, 1]}``; the criterion is
+    ``|mean_pred - mean_truth| <= rel_tol * |mean_truth|`` per sample.
+    """
+    v = vault()
+    mt, mp = tank_mean(truth), tank_mean(pred)
+    out: dict[str, float] = {}
+    for name in components:
+        i = v.index(name)
+        ok = np.abs(mp[:, i] - mt[:, i]) <= rel_tol * np.abs(mt[:, i])
+        out[name] = float(np.mean(ok))
+    return out
+
+
+def error_vs_time(
+    truth: np.ndarray,
+    pred: np.ndarray,
+    t: np.ndarray,
+    bin_days: float = 1.0,
+    spread: np.ndarray | None = None,
+) -> dict[str, np.ndarray]:
+    """Per-component NRMSE in consecutive time bins, pooled over tanks.
+
+    Bins are ``[t0 + k*bin_days, t0 + (k+1)*bin_days)``, the last one closed on
+    the right. ``spread`` (14,) is the fixed normaliser; by default the range of
+    the whole supplied truth, so every bin is on one scale. Returns
+    ``{"t_start": (b,), "t_end": (b,), "n": (b,), "nrmse": (b, 14)}``.
+    """
+    truth = np.asarray(truth, dtype=float)
+    pred = np.asarray(pred, dtype=float)
+    t = np.asarray(t, dtype=float)
+    n_comp = truth.shape[-1]
+    if spread is None:
+        flat = truth.reshape(-1, n_comp)
+        spread = flat.max(axis=0) - flat.min(axis=0)
+    t0, t1 = float(t[0]), float(t[-1])
+    n_bins = max(int(np.ceil((t1 - t0) / bin_days - 1e-9)), 1)
+    starts = t0 + bin_days * np.arange(n_bins)
+    ends = np.minimum(starts + bin_days, t1)
+    counts = np.zeros(n_bins, dtype=int)
+    values = np.full((n_bins, n_comp), np.nan)
+    for k in range(n_bins):
+        upper = (t < starts[k] + bin_days - 1e-9) if k < n_bins - 1 else (t <= t1 + 1e-9)
+        mask = (t >= starts[k] - 1e-9) & upper
+        counts[k] = int(mask.sum())
+        if counts[k]:
+            values[k] = nrmse(
+                truth[mask].reshape(-1, n_comp), pred[mask].reshape(-1, n_comp), spread=spread
+            )
+    return {"t_start": starts, "t_end": ends, "n": counts, "nrmse": values}
+
+
 # --- effluent quality (ground-truth dataset descriptor) --------------------
 def _effluent_terms(plant: Bsm1Plant, effluent: np.ndarray) -> dict[str, np.ndarray]:
     v = plant.vault

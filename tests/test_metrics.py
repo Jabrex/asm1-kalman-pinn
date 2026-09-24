@@ -47,3 +47,63 @@ def test_per_tank_nrmse_shape_and_values():
     assert np.isnan(out[0, 1])  # zero range -> undefined, not inf
     fixed = per_tank_nrmse(truth, pred, spread=np.full(14, 6.0))
     assert np.isclose(fixed[2, 0], 0.05)  # 0.3 / 6
+
+# --- v1.1 decision metrics ----------------------------------------------------
+def test_skill_score_and_gap_closed():
+    from src.eval.metrics import gap_closed, skill_score
+
+    assert skill_score(0.2, 0.4) == 0.5
+    assert skill_score(0.4, 0.4) == 0.0
+    assert skill_score(0.6, 0.4) < 0.0
+    np.testing.assert_allclose(skill_score(np.array([0.1, 0.3]), np.array([0.2, 0.3])), [0.5, 0.0])
+    # persistence 0.4, reference 0.1: halfway is 0.25
+    assert np.isclose(gap_closed(0.25, 0.4, 0.1), 0.5)
+    assert np.isclose(gap_closed(0.1, 0.4, 0.1), 1.0)
+    assert np.isclose(gap_closed(0.4, 0.4, 0.1), 0.0)
+    assert np.isnan(gap_closed(0.2, 0.3, 0.3))  # coincident references: undefined
+
+
+def test_level_error_is_rmse_over_mean_level():
+    from src.eval.metrics import level_error
+
+    truth = np.full((6, 5, 14), 100.0)
+    pred = truth.copy()
+    pred[..., 4] += 10.0              # constant 10 % offset on component 4
+    out = level_error(truth, pred)
+    assert out.shape == (14,)
+    assert np.isclose(out[4], 0.10)
+    assert np.isclose(out[0], 0.0)
+    zero = np.zeros((6, 5, 14))
+    assert np.isnan(level_error(zero, zero + 1.0)[0])  # zero level: undefined, not inf
+
+
+def test_within_tolerance_uses_volume_weighted_tank_means(v):
+    from src.eval.metrics import tank_mean, within_tolerance_fraction
+
+    i_bh = v.index("X_B_H")
+    truth = np.full((10, 5, 14), 1000.0)
+    pred = truth.copy()
+    # +50 % in the two 1000 m3 tanks, -25 % in the three 1333 m3 tanks:
+    # the plant-wide volume-weighted mean is unchanged
+    pred[:, :2, i_bh] *= 1.5
+    pred[:, 2:, i_bh] *= 1.0 - 0.5 * 2000.0 / 3999.0
+    np.testing.assert_allclose(tank_mean(pred)[:, i_bh], 1000.0, rtol=1e-12)
+    pred[5:, :, v.index("X_B_A")] *= 1.2  # half the samples 20 % off
+    frac = within_tolerance_fraction(truth, pred)
+    assert frac == {"X_B_H": 1.0, "X_B_A": 0.5}
+    assert within_tolerance_fraction(truth, pred, components=("X_B_A",), rel_tol=0.25) == {"X_B_A": 1.0}
+
+
+def test_error_vs_time_bins():
+    from src.eval.metrics import error_vs_time
+
+    t = np.linspace(0.0, 3.0, 13)            # 0.25 d spacing, 3 one-day bins
+    truth = np.zeros((13, 5, 14))
+    truth[:, :, 0] = t[:, None]              # range 3 over the window
+    pred = truth.copy()
+    pred[t >= 2.0, :, 0] += 0.3              # error only in the last bin
+    out = error_vs_time(truth, pred, t, bin_days=1.0)
+    assert out["nrmse"].shape == (3, 14)
+    np.testing.assert_allclose(out["t_start"], [0.0, 1.0, 2.0])
+    assert list(out["n"]) == [4, 4, 5]       # last bin closed on the right
+    np.testing.assert_allclose(out["nrmse"][:, 0], [0.0, 0.0, 0.1])
