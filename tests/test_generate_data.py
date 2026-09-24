@@ -10,7 +10,9 @@ import numpy as np
 import pytest
 
 from scripts import generate_data as gd
+from scripts.generate_random_truths import MAX_CANDIDATES, as_multipliers, candidate_matrix
 from src.asm1.plant import Bsm1Plant
+from src.asm1.truth_plants import kinetic_names
 from src.data.influent import dry_weather
 from src.data.simulate import SAMPLE_INTERVAL_DAYS, default_seed, simulate
 
@@ -69,3 +71,10 @@ def test_closure_recheck_uses_a_finer_grid_only_when_needed():
     assert fine["gate_grid_days"] == SAMPLE_INTERVAL_DAYS / gd.CLOSURE_REFINE_FACTOR
     assert fine["refined"]["reactor_cod_closure"] < coarse["reactor_cod_closure"]
     assert fine["pass"] is False
+
+
+def test_random_candidates_do_not_depend_on_the_ensemble_size():
+    m = candidate_matrix(0.3, 0)
+    assert m.shape == (MAX_CANDIDATES, 15)
+    np.testing.assert_array_equal(m[:3], np.random.default_rng(0).normal(0.0, 0.3, size=(3, 15)))
+    assert tuple(as_multipliers(m[0])) == kinetic_names()
