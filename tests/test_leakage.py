@@ -337,3 +337,86 @@ def test_observers_stay_finite_when_hidden_truth_is_poisoned(poison_t0):
         assert not out[name]["info"]["diverged"]
         for key, arr in out[name]["predictions"].items():
             assert np.isfinite(arr).all(), "%s/%s became non-finite" % (name, key)
+
+
+# --------------------------------------------------------------------------
+# runtime layer, v1.1 anchor runs: truth poisoned everywhere, t = 0 included
+# --------------------------------------------------------------------------
+#: Valid kinetic names for the cl_pinn_theta probe. Any subset works here; the
+#: pre-registered one comes from results/v11/analysis/kinetic_subset.json.
+THETA_PROBE = ["muA", "bA", "muH", "bH"]
+
+
+def _poison_everything(dataset) -> None:
+    """Replace every ground-truth sample, including t = 0, with NaN, in place."""
+    dataset.truth_reactor = np.full_like(dataset.truth_reactor, np.nan)
+    dataset.truth_y = np.full_like(dataset.truth_y, np.nan)
+
+
+@pytest.mark.parametrize("influent_mode", ["exact", "composite"])
+@pytest.mark.parametrize("model", ["cl_pinn", "cl_pinn_theta", "lstm"])
+def test_anchor_runs_never_read_truth_even_at_time_zero(model, influent_mode, tmp_path, monkeypatch):
+    """With anchor_file set the Trainer must not need any truth sample at all.
+
+    The datasets are poisoned as they are loaded, before the Trainer exists, so
+    ``__init__`` (Z(0), output scale, IC weights), every curriculum stage,
+    the collocation path, the kinetic prior, one real optimisation step and
+    ``finalise`` (including the rain prediction) all run on poisoned data.
+    """
+    torch = pytest.importorskip("torch")
+    data_dir = _require_datasets()
+
+    from anchor_utils import write_anchor
+    from src.data.sensors import ObservationDataset
+    from src.train.run import RunConfig, Trainer
+
+    anchor = write_anchor(tmp_path / "anchor.npz", data_dir, sigma_tag=SIGMA_TAG, rel_std="graded")
+    original = ObservationDataset.load.__func__
+    loaded: list[str] = []
+
+    def poisoned_load(cls, path):
+        dataset = original(cls, path)
+        _poison_everything(dataset)
+        loaded.append(Path(path).name)
+        return dataset
+
+    monkeypatch.setattr(ObservationDataset, "load", classmethod(poisoned_load))
+
+    trainer = Trainer(
+        RunConfig(
+            run_id="_leakage_anchor_%s_%s" % (model, influent_mode), model=model, noise=0.05,
+            profile="quick", steps_quick=1, log_every=1, device="cpu", dtype="float64",
+            data_dir=str(data_dir), out_dir=str(tmp_path / "runs"),
+            anchor_file=str(anchor), influent_mode=influent_mode,
+            total_derivative=True, ras_filter_window=4,
+            trainable_kinetics=THETA_PROBE if model == "cl_pinn_theta" else [],
+        )
+    )
+    assert {"obs_dry_sigma%s.npz" % SIGMA_TAG, "obs_constant_sigma%s.npz" % SIGMA_TAG} <= set(loaded)
+    assert np.isnan(trainer.data["dry"].truth_reactor).all(), "poisoning did not take"
+    assert np.isfinite(trainer.z0).all() and np.isfinite(trainer.state_scale).all()
+    assert trainer.schedule.stages, "schedule is empty - the check would be vacuous"
+
+    params = list(trainer.model.parameters())
+    if trainer.adapter is not None:
+        params += list(trainer.adapter.parameters())
+    for stage in trainer.schedule.stages:
+        batch = trainer._stage_tensors(stage)
+        assert torch.isfinite(batch["z0_true"]).all(), stage.name
+        assert torch.isfinite(batch["targets"]).all(), stage.name
+        parts = trainer.step_loss(stage, trainer._weights_for(stage.weights_end))
+        for name, value in parts.detached().items():
+            assert np.isfinite(value), "stage %s: %s = %s" % (stage.name, name, value)
+        for p in params:
+            p.grad = None
+        parts.total.backward()
+        bad = [i for i, p in enumerate(params) if p.grad is not None and not torch.isfinite(p.grad).all()]
+        assert not bad, "stage %s: non-finite gradients in parameters %s" % (stage.name, bad[:5])
+
+    summary = trainer.train()
+    assert all(np.isfinite(v) for k, v in trainer.history[-1].items()
+               if isinstance(v, float)), trainer.history[-1]
+    with np.load(tmp_path / "runs" / trainer.cfg.run_id / "predictions.npz") as preds:
+        for key in preds.files:
+            assert np.isfinite(preds[key]).all(), key
+    assert summary["anchor_file"] == str(anchor)
