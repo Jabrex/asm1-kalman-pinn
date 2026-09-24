@@ -232,3 +232,60 @@ def test_fisher_eigen_whitens_with_the_prior():
     assert w == pytest.approx([1.0, 1.0])
     u_sum, u_split = sens.sum_split_directions(np.ones((5, 14)), vault().components)
     assert abs(u_sum @ u_split) < 1e-12
+
+
+# -- Task 4.3: start-up memory, slow modes, influent forcing ------------------------
+def test_self_sensitivity_decay_recovers_known_rates():
+    t = np.linspace(0.0, 12.0, 1153)
+    rates = np.full(70, 0.5)
+    rates[14:28] = 0.05                                   # tank 2 never reaches 1/e in 12 d
+    phis = np.stack([np.diag(np.exp(-rates * (t[1] - t[0])))] * (t.size - 1))
+    tau, extrap = sens.self_sensitivity_decay(phis, t)
+    assert tau[0] == pytest.approx(np.full(14, 2.0), abs=1e-4)
+    assert not extrap[0].any()
+    assert tau[1] == pytest.approx(np.full(14, 20.0), rel=1e-9)   # 12 / -ln(exp(-0.6))
+    assert extrap[1].all()
+
+
+def test_self_sensitivity_pools_tanks():
+    """Mixing between tanks must not register as lost memory."""
+    t = np.linspace(0.0, 12.0, 1153)
+    perm = np.zeros((70, 70))
+    for k in range(5):
+        for c in range(14):
+            perm[((k + 1) % 5) * 14 + c, k * 14 + c] = 1.0
+    phis = np.stack([np.exp(-0.25 * (t[1] - t[0])) * perm] * (t.size - 1))
+    tau, _ = sens.self_sensitivity_decay(phis, t)
+    assert tau == pytest.approx(np.full((5, 14), 4.0), abs=1e-3)
+
+
+def test_forcing_share_limits():
+    t = np.linspace(0.0, 1.0, 11)
+    phis = np.stack([np.eye(70)] * 10)
+    gammas = np.zeros((10, 70, 14))
+    gammas[:, :, 0] = 0.1
+    names = tuple("z%d" % i for i in range(14))
+    tl = sens.TangentLinear(t, phis, gammas, "zin_rel", names, 1)
+    assert sens.forcing_share(tl, np.full(70, 1e-12))["share"].min() > 0.999
+    quiet = sens.TangentLinear(t, phis, np.zeros_like(gammas), "zin_rel", names, 1)
+    assert sens.forcing_share(quiet, np.full(70, 0.1))["share"].max() == 0.0
+    with pytest.raises(ValueError):
+        sens.forcing_share(sens.TangentLinear(t, phis, None, "none", (), 1), np.full(70, 0.1))
+
+
+def test_modal_analysis_orders_slowest_first():
+    modes = sens.modal_analysis(np.diag([-2.0, -1.0 / 7.0, -1.0 / 3.0]), n_modes=3, labels=["a", "b", "c"])
+    assert [m["time_constant_days"] for m in modes] == pytest.approx([7.0, 3.0, 0.5])
+    assert modes[0]["top_participation"][0] == ["b", pytest.approx(1.0)]
+
+
+def test_finite_difference_jacobian_schemes_on_a_kink():
+    def fun(y):
+        return np.array([min(y[0], 1.0) + 2.0 * y[1], y[0] * y[1]])
+
+    y = np.array([1.0, 3.0])
+    fwd = sens.finite_difference_jacobian(fun, y, scheme="forward")
+    bwd = sens.finite_difference_jacobian(fun, y, scheme="backward")
+    assert fwd[0, 0] == pytest.approx(0.0, abs=1e-6)
+    assert bwd[0, 0] == pytest.approx(1.0, rel=1e-6)
+    assert fwd[1] == pytest.approx([3.0, 1.0], rel=1e-5)

@@ -344,3 +344,117 @@ def sum_split_directions(z0: np.ndarray, components: Sequence[str], a: str = "X_
 def direction_information_gain(p_post: np.ndarray, p0: np.ndarray, u: np.ndarray) -> float:
     prior = np.diag(p0) if np.ndim(p0) == 1 else np.asarray(p0, dtype=float)
     return float(1.0 - np.sqrt((u @ p_post @ u) / (u @ prior @ u)))
+
+
+# -- start-up memory, slow modes, influent forcing ----------------------------
+def self_sensitivity_decay(phis: np.ndarray, t: np.ndarray,
+                           cumulative: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """1/e decay time of the self-sensitivity of each (tank, component).
+
+    The diagonal is taken in the tank-pooled basis: ``r[k, c](t)`` is the
+    response of component ``c`` in tank ``k`` to the same relative error in
+    ``c`` in all five tanks. Tank-by-tank diagonals decay within the ~20 min
+    tank residence time and would measure mixing, not memory. Returns
+    ``(tau_days (5, 14), extrapolated (5, 14))``; a response that never falls
+    below 1/e inside the window is extrapolated as ``T / -ln r(T)`` when
+    ``0 < r(T) < 1``, and set to ``inf`` otherwise.
+    """
+    t = np.asarray(t, dtype=float)
+    m = cumulative if cumulative is not None else cumulative_propagators(phis)
+    n_c = m.shape[1] // N_TANKS
+    resp = np.empty((m.shape[0], N_TANKS, n_c))
+    for c in range(n_c):
+        cols = c + n_c * np.arange(N_TANKS)
+        resp[:, :, c] = m[:, cols][:, :, cols].sum(axis=2)
+    tau = np.full((N_TANKS, n_c), np.inf)
+    extrap = np.zeros((N_TANKS, n_c), dtype=bool)
+    level = np.exp(-1.0)
+    span = t[-1] - t[0]
+    for k in range(N_TANKS):
+        for c in range(n_c):
+            r = resp[:, k, c]
+            below = np.nonzero(r <= level)[0]
+            if below.size:
+                i = int(below[0])
+                w = (r[i - 1] - level) / (r[i - 1] - r[i])
+                tau[k, c] = t[i - 1] - t[0] + w * (t[i] - t[i - 1])
+            else:
+                extrap[k, c] = True
+                if 0.0 < r[-1] < 1.0:
+                    tau[k, c] = span / -np.log(r[-1])
+    return tau, extrap
+
+
+def modal_analysis(jac: np.ndarray, n_modes: int = 8,
+                   labels: Sequence[str] | None = None) -> list[dict[str, Any]]:
+    """Slowest modes of a Jacobian: eigenvalue, time constant and participation."""
+    w, vl, vr = eig(np.asarray(jac, dtype=float), left=True, right=True)
+    order = np.argsort(np.abs(w.real))
+    out = []
+    for i in order[:n_modes]:
+        part = np.abs(np.conj(vl[:, i]) * vr[:, i])
+        part = part / part.sum()
+        top = np.argsort(part)[::-1][:5]
+        out.append({
+            "eigenvalue": [float(w[i].real), float(w[i].imag)],
+            "time_constant_days": float(-1.0 / w[i].real) if w[i].real < 0 else float("inf"),
+            "top_participation": [[labels[k] if labels else int(k), float(part[k])] for k in top],
+        })
+    return out
+
+
+def jacobian_slow_modes(model: Any, z_ss: np.ndarray, u_ss: tuple[float, np.ndarray, float],
+                        n_modes: int = 8, labels: Sequence[str] | None = None) -> dict[str, Any]:
+    """Modal analysis of the reduced model at a (steady) state ``z_ss``."""
+    q, zin, tss = u_ss
+    x = np.log(np.clip(np.asarray(z_ss, dtype=float).reshape(-1), 1e-12, None))
+    j_x = _np(model.jacobians(x, float(q), np.asarray(zin, dtype=float), float(tss))[0])
+    g = _np(model.rhs_log(x, float(q), np.asarray(zin, dtype=float), float(tss))).reshape(-1)
+    return {"modes": modal_analysis(j_x, n_modes, labels), "rhs_log_max_abs": float(np.max(np.abs(g)))}
+
+
+def finite_difference_jacobian(fun: Any, y: np.ndarray, rel_step: float = 1e-6,
+                               floor: float = 1.0, scheme: str = "central") -> np.ndarray:
+    """Jacobian of ``fun(y)`` by forward, backward or central differences.
+
+    The full plant has non-smooth settler terms (``min`` fluxes, the clipped
+    settling velocity). At a kink one-sided derivatives differ, so the caller
+    reports all three schemes rather than trusting one.
+    """
+    y = np.asarray(y, dtype=float)
+    f0 = np.asarray(fun(y), dtype=float)
+    jac = np.empty((f0.size, y.size))
+    for j in range(y.size):
+        h = rel_step * max(abs(y[j]), floor)
+        yp, ym = y.copy(), y.copy()
+        yp[j] += h
+        ym[j] -= h
+        if scheme == "central":
+            jac[:, j] = (np.asarray(fun(yp)) - np.asarray(fun(ym))) / (2.0 * h)
+        elif scheme == "forward":
+            jac[:, j] = (np.asarray(fun(yp)) - f0) / h
+        elif scheme == "backward":
+            jac[:, j] = (f0 - np.asarray(fun(ym))) / h
+        else:
+            raise ValueError("scheme must be central, forward or backward")
+    return jac
+
+
+def forcing_share(tl: TangentLinear, p0: np.ndarray, zin_rel_sd: float = 0.10,
+                  cumulative: np.ndarray | None = None) -> dict[str, np.ndarray]:
+    """Share of the window variance due to influent composition error.
+
+    Each of the 14 influent components carries an independent, persistent
+    relative error of standard deviation ``zin_rel_sd`` over the whole window;
+    the initial state carries the prior ``p0``. Share per state =
+    ``mean_t var_forcing / (mean_t var_forcing + mean_t var_initial)``.
+    """
+    if tl.input_kind != "zin_rel" or tl.gammas is None:
+        raise ValueError("forcing_share needs tangent_linear(..., inputs='zin_rel')")
+    m = cumulative if cumulative is not None else cumulative_propagators(tl.phis)
+    g = cumulative_input_response(tl.phis, tl.gammas)
+    var_forcing = (zin_rel_sd ** 2) * np.sum(g ** 2, axis=2)
+    var_initial = window_variance(p0, m)
+    vf, vi = var_forcing.mean(axis=0), var_initial.mean(axis=0)
+    share = np.where(vf + vi > 0.0, vf / np.maximum(vf + vi, 1e-300), 0.0)
+    return {"share": share.reshape(N_TANKS, -1), "var_forcing": var_forcing, "var_initial": var_initial}
