@@ -35,8 +35,10 @@ class ObserverSpec:
     q_mode: str = "tuned"
     q_fixed: tuple[float, float] | None = None   # (q_soluble, q_particulate) for frozen/fixed
     q_criterion: str = "innovation"
+    q_grid: tuple[float, ...] | None = None      # None: ekf.Q_GRID
     augment: tuple[str, ...] = ()
     q_theta: float = 1e-3
+    theta_prior_sd: float = 0.693
     target_channels: tuple[str, ...] | None = None
     r_mode: str = "data"
     r_floor: float = 0.01
@@ -91,13 +93,14 @@ def run_estimators(dry: ObservationDataset, rain: ObservationDataset | None,
          else _spec_r(dry, channels, spec.r_floor))
     ras_var = ras_log_variance(raw[tr], w, spec.r_floor)
     base = EkfConfig(substeps=spec.substeps, q_theta=spec.q_theta, r_mode=spec.r_mode,
-                     r_floor=spec.r_floor, ras_filter_window=w)
+                     r_floor=spec.r_floor, ras_filter_window=w, theta_prior_sd=spec.theta_prior_sd)
     common = (channels, dry.q_in[tr], dry.z_in[tr], ras_f[tr], z0, rel)
 
     started, sel = time.perf_counter(), None
     if spec.q_mode == "tuned":
+        grid = {} if spec.q_grid is None else {"grid": tuple(float(q) for q in spec.q_grid)}
         sel = tune_q(model, t[tr], y[tr], *common, base, ras_log_var=ras_var, r=r,
-                     criterion=spec.q_criterion)
+                     criterion=spec.q_criterion, **grid)
         qs, qp = sel.q_soluble, sel.q_particulate
     else:
         qs, qp = spec.q_fixed

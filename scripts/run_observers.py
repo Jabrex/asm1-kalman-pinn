@@ -1,6 +1,12 @@
-"""Run the estimators over regime cells (cells:, grid:, random:) in processes with one
-torch thread each (default 12 workers, about 0.6 GB each). Writes
-<out_root>/<cell>/<estimator>[_qfrozen|_qfixed]_sigma<tag>[_r<k>]/; --freeze-q writes
+"""Run the estimators over regime cells in processes with one torch thread each
+(default 12 workers, about 0.6 GB each).
+
+Two config layouts are accepted:
+- a G6 cell file (top-level ``cell:``), validated by src.observers.cell_inputs, whose
+  run directories are ``<out_dir>/<estimator>[_frozenq]_sigma<tag>[_r<k>]``;
+- a G3 multi-cell file (``cells:``, ``grid:``, ``random:``), written to
+  ``<out_root>/<cell>/<estimator>[_frozenq|_qfixed]_sigma<tag>[_r<k>]``.
+Both run the same estimators (src.observers.pipeline). --freeze-q writes
 <out_root>/frozen_q.json from the first cell at sigma 0.10."""
 
 from __future__ import annotations
@@ -26,10 +32,13 @@ KINETICS_DIRS = {"k000": "results/raw", "k025": "results/raw_k025", "k050": "res
                  "k075": "results/raw_k075", "k100": "results/raw_k100",
                  "k000_off": "results/raw_k000_off"}
 INFLUENT_TAGS = {"exact": "ie", "composite": "ic", "composite_biased": "ib"}
-Q_SUFFIX = {"tuned": "", "frozen": "_qfrozen", "fixed": "_qfixed"}
+# "_frozenq" matches src.observers.cell_inputs.run_dir_name (G6 naming).
+Q_SUFFIX = {"tuned": "", "frozen": "_frozenq", "fixed": "_qfixed"}
 CELL_KEYS = ("sigmas", "realisations", "estimators", "q_modes", "q_fixed", "q_criterion",
              "ras_filter_window", "ras_mode", "target_channels", "augment", "augment_file",
-             "q_theta", "rain", "train_end_day", "holdout_days", "r_mode")
+             "q_theta", "rain", "train_end_day", "holdout_days", "r_mode", "r_floor", "q_grid",
+             "theta_prior_sd")
+RAS_MODE_OF_INPUT = {"filtered": "measured", "ideal_settler": "ideal_settler"}
 DEFAULT_WORKERS = min(12, max(1, (os.cpu_count() or 2) - 2))
 
 
@@ -64,6 +73,30 @@ def expand_cells(cfg: dict[str, Any]) -> list[dict[str, Any]]:
 def run_dir_name(estimator: str, q_mode: str, sigma: float, realisation: int) -> str:
     return "%s%s_sigma%s%s" % (estimator, Q_SUFFIX[q_mode], sigma_tag(sigma),
                                "_r%02d" % realisation if realisation else "")
+
+
+def _dir_name(cell: dict[str, Any], estimator: str, q_mode: str, sigma: float, r: int) -> str:
+    if cell.get("schema") == "cell":
+        from src.observers import cell_inputs
+
+        return cell_inputs.run_dir_name(estimator, q_mode, sigma, r)
+    return run_dir_name(estimator, q_mode, sigma, r)
+
+
+def cell_from_schema(cfg: dict[str, Any]) -> dict[str, Any]:
+    """A validated G6 cell file as the G3 cell dict that run_job executes."""
+    return {
+        "schema": "cell", "name": cfg["cell"], "data_dir": cfg["data_dir"],
+        "anchor_file": cfg["anchor_file"], "influent_mode": cfg["influent_mode"],
+        "ras_filter_window": int(cfg["ras_filter_window"]), "ras_input": cfg["ras_input"],
+        "ras_mode": RAS_MODE_OF_INPUT[cfg["ras_input"]], "estimators": list(cfg["estimators"]),
+        "augment": list(cfg["augment"]), "q_theta": float(cfg["q_theta"]),
+        "theta_prior_sd": float(cfg["theta_prior_sd"]), "q_grid": [float(q) for q in cfg["q_grid"]],
+        "r_floor": float(cfg["r_floor"]),
+        "target_channels": None if cfg["channels"] == "default" else list(cfg["channels"]),
+        "sigmas": [float(x) for x in cfg["sigmas"]], "realisations": [int(x) for x in cfg["realisations"]],
+        "q_modes": list(cfg["q_mode"]), "train_end_day": float(cfg["tune_window_days"][1]),
+    }
 
 
 def _label(job: dict[str, Any]) -> str:
@@ -109,14 +142,17 @@ def run_job(job: dict[str, Any], out_root: str, frozen_q: list[float] | None) ->
             q_fixed=(tuple(frozen_q) if q_mode == "frozen"
                      else tuple(cell["q_fixed"]) if q_mode == "fixed" else None),
             q_criterion=cell.get("q_criterion", "innovation"), augment=_augment(cell),
+            q_grid=tuple(cell["q_grid"]) if cell.get("q_grid") else None,
             q_theta=float(cell.get("q_theta", 1e-3)),
+            theta_prior_sd=float(cell.get("theta_prior_sd", 0.693)),
+            r_floor=float(cell.get("r_floor", 0.01)),
             target_channels=tuple(cell["target_channels"]) if cell.get("target_channels") else None,
             r_mode=cell.get("r_mode", "data"), rain=want_rain)
         results = run_estimators(dry, ObservationDataset.load(rain_path) if want_rain else None,
                                  anchor, spec)
         elapsed = time.perf_counter() - started
         for estimator, entry in results.items():
-            run_dir = out / run_dir_name(estimator, q_mode, sigma, r)
+            run_dir = out / _dir_name(cell, estimator, q_mode, sigma, r)
             run_dir.mkdir(parents=True, exist_ok=True)
             np.savez_compressed(run_dir / "predictions.npz", **entry["predictions"])
             summary = {
@@ -128,6 +164,8 @@ def run_job(job: dict[str, Any], out_root: str, frozen_q: list[float] | None) ->
                 "alpha": dry.meta.get("alpha", 1.0), "anchor": anchor_meta.get("name"),
                 "anchor_file": cell["anchor_file"], "spec": asdict(spec),
                 "vault_json_sha256": vault().json_sha256, **entry["info"]}
+            if cell.get("schema") == "cell":
+                summary.update(_schema_summary(cell, estimator, q_mode, r, entry))
             (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=float),
                                                   encoding="utf-8")
         return {"job": _label(job), "ok": True, "seconds": elapsed}
@@ -136,6 +174,25 @@ def run_job(job: dict[str, Any], out_root: str, frozen_q: list[float] | None) ->
         err = out / ("error_%s.txt" % _label(job).replace("/", "_"))
         err.write_text(traceback.format_exc(), encoding="utf-8")
         return {"job": _label(job), "ok": False, "error": str(err)}
+
+
+def _schema_summary(cell: dict[str, Any], estimator: str, q_mode: str, r: int,
+                    entry: dict[str, Any]) -> dict[str, Any]:
+    """The G6 summary keys (cell_inputs contract) on top of the G3 ones."""
+    from src.observers import cell_inputs
+
+    info = entry["info"]
+    nis = info.get("nis_mean")
+    out = {"model": cell_inputs.observer_model_name(estimator, q_mode), "seed": int(r),
+           **cell_inputs.numerics_summary(np.atleast_1d(np.inf if nis is None else nis),
+                                          entry["predictions"]["train"], len(info["channels"])),
+           "selected_q": {"q_soluble": info["q_soluble"], "q_particulate": info["q_particulate"]},
+           "estimator": estimator, "q_mode": q_mode, "realisation": int(r),
+           "influent_mode": cell["influent_mode"], "ras_input": cell["ras_input"]}
+    mult = info.get("multipliers")
+    if estimator.endswith("_aug") and mult:
+        out["learned_multipliers"] = dict(zip(mult["names"], (float(m) for m in mult["filtered_end"])))
+    return out
 
 
 def _init_worker() -> None:
@@ -155,9 +212,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--freeze-q", action="store_true")
     args = parser.parse_args(argv)
 
-    cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
-    out_root = Path(cfg.get("out_root", "results/v11/observers"))
-    cells = expand_cells(cfg)
+    raw = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
+    frozen_q_from = None
+    if isinstance(raw, dict) and "cell" in raw:
+        from src.observers import cell_inputs
+
+        cfg = cell_inputs.load_cell_config(args.config)
+        for s, r in itertools.product(cfg["sigmas"], cfg["realisations"]):
+            # Fail fast in the parent: data file, anchor and channel set must all resolve.
+            cell_inputs.prepare_cell_inputs(cfg, float(s), int(r),
+                                            train_end_day=float(cfg["tune_window_days"][1]))
+        out_root = Path(cfg["out_dir"]).parent
+        cells = [cell_from_schema(cfg)]
+        frozen_q_from = cfg["frozen_q_from"]
+    else:
+        cfg = raw
+        out_root = Path(cfg.get("out_root", "results/v11/observers"))
+        cells = expand_cells(cfg)
     if args.estimators:
         cells = [{**c, "estimators": list(args.estimators)} for c in cells]
     jobs = [{"cell": c, "sigma": float(s), "realisation": int(r), "q_mode": q}
@@ -165,16 +236,18 @@ def main(argv: list[str] | None = None) -> int:
             for q in c.get("q_modes", ["tuned"])]
     if args.resume:
         jobs = [j for j in jobs if not all(
-            (out_root / j["cell"]["name"] / run_dir_name(e, j["q_mode"], j["sigma"], j["realisation"])
+            (out_root / j["cell"]["name"] / _dir_name(j["cell"], e, j["q_mode"], j["sigma"], j["realisation"])
              / "summary.json").exists() for e in j["cell"].get("estimators", []))]
     frozen_q = None
     if any(j["q_mode"] == "frozen" for j in jobs) and not args.list:
-        path = out_root / "frozen_q.json"
+        path = Path(frozen_q_from) if frozen_q_from else out_root / "frozen_q.json"
         if not path.exists():
             raise SystemExit("q_modes has 'frozen' but %s is missing; run the reference cell "
                              "with --freeze-q first" % path)
-        info = json.loads(path.read_text(encoding="utf-8"))
-        frozen_q = [info["q_soluble"], info["q_particulate"]]
+        from src.observers import cell_inputs
+
+        q = cell_inputs.read_frozen_q(path)
+        frozen_q = [q["q_soluble"], q["q_particulate"]]
     print("Observer grid: %d cells, %d jobs, %d workers -> %s"
           % (len(cells), len(jobs), args.workers, out_root))
     for j in jobs:
