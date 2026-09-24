@@ -1,0 +1,28 @@
+# Lab-panel noise realisations at K1-Ic (bsm1_15c truth, composite influent), frozen q.
+# Nine extra lab seeds (20260924..20260932) for Al1 and Al2; reported as a spread around
+# the seed-20260923 cells of grid_main, never pooled and never a replacement.
+out_root: results/v11/observers
+sigmas: [0.10]
+q_modes: [frozen]
+estimators: [ekf, eks]
+ras_filter_window: 4
+rain: false
+cells:
+  - {name: k100_ic_al1_lab01, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r01/Al1.npz, influent_mode: composite}
+  - {name: k100_ic_al2_lab01, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r01/Al2.npz, influent_mode: composite}
+  - {name: k100_ic_al1_lab02, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r02/Al1.npz, influent_mode: composite}
+  - {name: k100_ic_al2_lab02, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r02/Al2.npz, influent_mode: composite}
+  - {name: k100_ic_al1_lab03, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r03/Al1.npz, influent_mode: composite}
+  - {name: k100_ic_al2_lab03, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r03/Al2.npz, influent_mode: composite}
+  - {name: k100_ic_al1_lab04, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r04/Al1.npz, influent_mode: composite}
+  - {name: k100_ic_al2_lab04, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r04/Al2.npz, influent_mode: composite}
+  - {name: k100_ic_al1_lab05, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r05/Al1.npz, influent_mode: composite}
+  - {name: k100_ic_al2_lab05, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r05/Al2.npz, influent_mode: composite}
+  - {name: k100_ic_al1_lab06, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r06/Al1.npz, influent_mode: composite}
+  - {name: k100_ic_al2_lab06, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r06/Al2.npz, influent_mode: composite}
+  - {name: k100_ic_al1_lab07, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r07/Al1.npz, influent_mode: composite}
+  - {name: k100_ic_al2_lab07, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r07/Al2.npz, influent_mode: composite}
+  - {name: k100_ic_al1_lab08, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r08/Al1.npz, influent_mode: composite}
+  - {name: k100_ic_al2_lab08, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r08/Al2.npz, influent_mode: composite}
+  - {name: k100_ic_al1_lab09, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r09/Al1.npz, influent_mode: composite}
+  - {name: k100_ic_al2_lab09, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_lab/r09/Al2.npz, influent_mode: composite}

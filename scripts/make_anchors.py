@@ -87,7 +87,8 @@ def build_ensemble(n: int, sigma_log: float, seed: int, out: Path, workers: int)
     return meta
 
 
-def build_anchors(data_dir: Path, names: list[str], out_dir: Path, ensemble_path: Path) -> dict:
+def build_anchors(data_dir: Path, names: list[str], out_dir: Path, ensemble_path: Path,
+                  lab_seed: int = LAB_SEED) -> dict:
     from src.asm1.truth_plants import truth_vault
 
     source = data_dir / "obs_dry_sigma0p00.npz"
@@ -118,7 +119,7 @@ def build_anchors(data_dir: Path, names: list[str], out_dir: Path, ensemble_path
     if set(names) & {"Al1", "Al2"}:
         truth_v = truth_vault(preset, alpha)
         panel = A.lab_values(A.lab_operators(truth_v), z_truth0, PANEL_ERRORS,
-                             np.random.default_rng(LAB_SEED))
+                             np.random.default_rng(lab_seed))
         ops = A.lab_operators(vault())
         al1 = A.gaussian_log_update(nominal_ss, rel_s, [ops[k] for k in PANEL_ERRORS],
                                     [panel[k] for k in PANEL_ERRORS], list(PANEL_ERRORS.values()))
@@ -126,7 +127,7 @@ def build_anchors(data_dir: Path, names: list[str], out_dir: Path, ensemble_path
                                           "lab_values": panel, "lab_rel_errors": PANEL_ERRORS})
         if "Al2" in names:
             resp = A.lab_values(A.respirometry_operators(truth_v), z_truth0, RESPIROMETRY_ERRORS,
-                                np.random.default_rng([LAB_SEED, 2]))
+                                np.random.default_rng([lab_seed, 2]))
             rops = A.respirometry_operators(vault())
             al2 = A.gaussian_log_update(*al1, [rops[k] for k in RESPIROMETRY_ERRORS],
                                         [resp[k] for k in RESPIROMETRY_ERRORS],
@@ -141,7 +142,7 @@ def build_anchors(data_dir: Path, names: list[str], out_dir: Path, ensemble_path
         path = out_dir / ("%s.npz" % name)
         np.savez_compressed(path, z0_mean=mean, z0_rel_std=rel, nominal_ss=nominal_ss,
                             settler_init=settler, meta=json.dumps({"name": name, **base, **extra,
-                                                                   "lab_seed": LAB_SEED}))
+                                                                   "lab_seed": lab_seed}))
         err = float(np.sqrt(np.mean(np.log(np.maximum(mean, 1e-12) / np.maximum(z_truth0, 1e-12)) ** 2)))
         report["anchors"][name] = {"file": path.as_posix(), "rms_log_error_vs_truth0": err,
                                    "median_rel_std": float(np.median(rel))}
@@ -167,6 +168,8 @@ def main(argv: list[str] | None = None) -> int:
                         choices=["A0", "As", "Al1", "Al2"])
     parser.add_argument("--ensemble", type=Path, default=ENSEMBLE)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--lab-seed", type=int, default=LAB_SEED,
+                        help="lab-panel noise seed; extra seeds give a spread, never a replacement")
     args = parser.parse_args(argv)
     if args.build_ensemble:
         meta = build_ensemble(args.n, args.sigma_log, args.seed, args.out, args.workers)
@@ -176,7 +179,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.data_dir is None:
         parser.error("--data-dir is required unless --build-ensemble is given")
-    print(json.dumps(build_anchors(args.data_dir, args.anchors, args.out, args.ensemble), indent=2))
+    print(json.dumps(build_anchors(args.data_dir, args.anchors, args.out, args.ensemble, args.lab_seed),
+                     indent=2))
     return 0
 
 
