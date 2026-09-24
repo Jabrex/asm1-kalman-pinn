@@ -1,0 +1,16 @@
+# Reference cell K0-Ie-A0: in-kinetics truth, exact influent, oracle anchor.
+# Its sigma-0.10 tuned q becomes the frozen q of every other cell (--freeze-q).
+# q_criterion is the pre-registered selection rule (G6 PREREGISTRATION.md);
+# both scores are stored in summary.json["q_table"] whatever the rule.
+out_root: results/v11/observers
+sigmas: [0.10]
+q_modes: [tuned]
+q_criterion: innovation
+estimators: [ekf, eks, ieks, ekf_aug, eks_aug, ekf_online]
+augment_file: results/v11/analysis/kinetic_subset.json
+ras_filter_window: 4
+cells:
+  - name: k000_ie_a0
+    data_dir: results/raw
+    anchor_file: results/v11/anchors/k000/A0.npz
+    influent_mode: exact

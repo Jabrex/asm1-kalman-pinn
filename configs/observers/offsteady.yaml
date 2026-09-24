@@ -1,0 +1,12 @@
+# M0-prime: in-kinetics truth started 14 days off steady state (G2 raw_k000_off).
+out_root: results/v11/observers
+anchors_root: results/v11/anchors
+sigmas: [0.10]
+q_modes: [tuned, frozen]
+q_criterion: innovation
+estimators: [ekf, eks, ieks, ekf_online]
+ras_filter_window: 4
+grid:
+  kinetics: [k000_off]
+  influent: [exact]
+  anchors: [A0, As, Al1]

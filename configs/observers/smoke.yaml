@@ -1,0 +1,15 @@
+# G3 smoke run: every estimator once on the in-kinetics reference cell.
+# The augment list is a placeholder to exercise the code path only; the real
+# subset comes from results/v11/analysis/kinetic_subset.json (G4).
+out_root: results/v11/_smoke_observers
+sigmas: [0.10]
+q_modes: [fixed]
+q_fixed: [0.1, 0.03]   # smoke only; the grid uses tuned and frozen q
+cells:
+  - name: k000_ie_a0
+    data_dir: results/raw
+    anchor_file: results/v11/anchors/k000/A0.npz
+    influent_mode: exact
+    estimators: [ekf, eks, ieks, ekf_aug, eks_aug, ekf_online]
+    augment: [muH, bH]
+    ras_filter_window: 4

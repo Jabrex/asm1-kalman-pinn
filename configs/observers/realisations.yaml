@@ -1,0 +1,13 @@
+# Nine extra noise realisations at sigma 0.10 (realisation 0 is in grid_main).
+# Reported as a spread, never pooled with the seed-0 cell.
+out_root: results/v11/observers
+sigmas: [0.10]
+realisations: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+q_modes: [tuned]
+q_criterion: innovation
+estimators: [ekf, eks]
+ras_filter_window: 4
+rain: false
+cells:
+  - {name: k000_ie_a0, data_dir: results/raw, anchor_file: results/v11/anchors/k000/A0.npz, influent_mode: exact}
+  - {name: k100_ic_as, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100/As.npz, influent_mode: composite}

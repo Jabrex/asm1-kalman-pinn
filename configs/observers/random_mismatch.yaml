@@ -1,0 +1,13 @@
+# 50 random kinetic truths (G2 raw_rand/<i>, sigma_log 0.3), exact influent, A0.
+# Open loop comes from make_baselines; here EKF, EKS and the augmented EKS.
+out_root: results/v11/observers
+sigmas: [0.10]
+q_modes: [frozen]
+estimators: [ekf, eks, eks_aug]
+augment_file: results/v11/analysis/kinetic_subset.json
+ras_filter_window: 4
+rain: false
+random:
+  count: 50
+  data_root: results/raw_rand
+  anchors_root: results/v11/anchors/rand

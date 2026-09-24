@@ -1,0 +1,11 @@
+# Anchor-ensemble width sensitivity (sigma_log 0.4 and 0.8) for As and Al1 at K1-Ic.
+out_root: results/v11/observers
+sigmas: [0.10]
+q_modes: [frozen]
+estimators: [ekf, eks]
+ras_filter_window: 4
+cells:
+  - {name: k100_ic_as_slog04, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_slog04/As.npz, influent_mode: composite}
+  - {name: k100_ic_al1_slog04, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_slog04/Al1.npz, influent_mode: composite}
+  - {name: k100_ic_as_slog08, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_slog08/As.npz, influent_mode: composite}
+  - {name: k100_ic_al1_slog08, data_dir: results/raw_k100, anchor_file: results/v11/anchors/k100_slog08/Al1.npz, influent_mode: composite}

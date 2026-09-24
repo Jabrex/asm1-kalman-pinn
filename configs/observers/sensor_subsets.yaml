@@ -1,0 +1,219 @@
+out_root: results/v11/observers
+sigmas:
+- 0.1
+q_modes:
+- tuned
+q_criterion: innovation
+estimators:
+- ekf
+- eks
+ras_filter_window: 4
+rain: false
+cells:
+- name: k100_ie_a0_drop_S_O_tank3
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank4
+  - S_O_tank5
+  - S_NH_tank5
+  - S_NO_tank2
+  - S_NO_tank5
+  - TSS_tank5
+- name: k100_ie_a0_drop_S_O_tank4
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank3
+  - S_O_tank5
+  - S_NH_tank5
+  - S_NO_tank2
+  - S_NO_tank5
+  - TSS_tank5
+- name: k100_ie_a0_drop_S_O_tank5
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank3
+  - S_O_tank4
+  - S_NH_tank5
+  - S_NO_tank2
+  - S_NO_tank5
+  - TSS_tank5
+- name: k100_ie_a0_drop_S_NH_tank5
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank3
+  - S_O_tank4
+  - S_O_tank5
+  - S_NO_tank2
+  - S_NO_tank5
+  - TSS_tank5
+- name: k100_ie_a0_drop_S_NO_tank2
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank3
+  - S_O_tank4
+  - S_O_tank5
+  - S_NH_tank5
+  - S_NO_tank5
+  - TSS_tank5
+- name: k100_ie_a0_drop_S_NO_tank5
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank3
+  - S_O_tank4
+  - S_O_tank5
+  - S_NH_tank5
+  - S_NO_tank2
+  - TSS_tank5
+- name: k100_ie_a0_drop_TSS_tank5
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank3
+  - S_O_tank4
+  - S_O_tank5
+  - S_NH_tank5
+  - S_NO_tank2
+  - S_NO_tank5
+- name: k100_ie_a0_add_S_NH_tank1
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank3
+  - S_O_tank4
+  - S_O_tank5
+  - S_NH_tank5
+  - S_NO_tank2
+  - S_NO_tank5
+  - TSS_tank5
+  - S_NH_tank1
+- name: k100_ie_a0_add_S_NH_tank2
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank3
+  - S_O_tank4
+  - S_O_tank5
+  - S_NH_tank5
+  - S_NO_tank2
+  - S_NO_tank5
+  - TSS_tank5
+  - S_NH_tank2
+- name: k100_ie_a0_add_S_NH_tank3
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank3
+  - S_O_tank4
+  - S_O_tank5
+  - S_NH_tank5
+  - S_NO_tank2
+  - S_NO_tank5
+  - TSS_tank5
+  - S_NH_tank3
+- name: k100_ie_a0_add_S_NH_tank4
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank3
+  - S_O_tank4
+  - S_O_tank5
+  - S_NH_tank5
+  - S_NO_tank2
+  - S_NO_tank5
+  - TSS_tank5
+  - S_NH_tank4
+- name: k100_ie_a0_add_S_NO_tank1
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank3
+  - S_O_tank4
+  - S_O_tank5
+  - S_NH_tank5
+  - S_NO_tank2
+  - S_NO_tank5
+  - TSS_tank5
+  - S_NO_tank1
+- name: k100_ie_a0_add_S_NO_tank3
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank3
+  - S_O_tank4
+  - S_O_tank5
+  - S_NH_tank5
+  - S_NO_tank2
+  - S_NO_tank5
+  - TSS_tank5
+  - S_NO_tank3
+- name: k100_ie_a0_add_S_NO_tank4
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank3
+  - S_O_tank4
+  - S_O_tank5
+  - S_NH_tank5
+  - S_NO_tank2
+  - S_NO_tank5
+  - TSS_tank5
+  - S_NO_tank4
+- name: k100_ie_a0_add_TSS_tank1
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank3
+  - S_O_tank4
+  - S_O_tank5
+  - S_NH_tank5
+  - S_NO_tank2
+  - S_NO_tank5
+  - TSS_tank5
+  - TSS_tank1
+- name: k100_ie_a0_add_SCOD_tank1
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank3
+  - S_O_tank4
+  - S_O_tank5
+  - S_NH_tank5
+  - S_NO_tank2
+  - S_NO_tank5
+  - TSS_tank5
+  - SCOD_tank1
+- name: k100_ie_a0_add_SCOD_tank5
+  data_dir: results/raw_k100
+  anchor_file: results/v11/anchors/k100/A0.npz
+  influent_mode: exact
+  target_channels:
+  - S_O_tank3
+  - S_O_tank4
+  - S_O_tank5
+  - S_NH_tank5
+  - S_NO_tank2
+  - S_NO_tank5
+  - TSS_tank5
+  - SCOD_tank5
