@@ -333,3 +333,50 @@ def test_theta_run_keeps_the_cl_pinn_budget_and_initial_loss(tmp_path):
 def test_invalid_kinetic_settings_are_rejected(tmp_path, overrides):
     with pytest.raises(ValueError, match="trainable_kinetics"):
         _trainer(tmp_path, **overrides)
+
+
+# ----------------------------------------------------------------------------
+# Task 5.5 - summary.json and checkpoint
+# ----------------------------------------------------------------------------
+SUMMARY_KEYS = (
+    "data_dir", "truth_preset", "alpha", "constant_from", "anchor_file", "anchor",
+    "influent_mode", "total_derivative", "ras_filter_window", "target_channels",
+    "trainable_kinetics", "learned_multipliers", "variant",
+)
+
+
+def test_summary_records_the_regime_settings(tmp_path):
+    anchor = write_anchor(tmp_path / "Ag.npz", RAW, sigma_tag="0p10", rel_std="graded")
+    trainer = _trainer(
+        tmp_path, model="cl_pinn_theta", trainable_kinetics=THETA, anchor_file=str(anchor),
+        influent_mode="composite", total_derivative=True, ras_filter_window=4, variant="probe",
+        steps_quick=1,
+    )
+    summary = trainer.train()
+    run_dir = tmp_path / "runs" / "_g5_probe"
+    written = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    assert written == json.loads(json.dumps(summary))
+    assert all(key in written for key in SUMMARY_KEYS)
+    assert written["influent_mode"] == "composite"
+    assert written["anchor_file"] == str(anchor) and written["anchor"] == "A0_test"
+    assert written["truth_preset"] == "vault20" and written["constant_from"] == "truth"
+    assert written["trainable_kinetics"] == THETA
+    assert set(written["learned_multipliers"]) == set(THETA)
+    assert written["target_channels"] == [c.name for c in trainer.target_channels]
+    assert written["total_derivative"] is True and written["ras_filter_window"] == 4
+    assert written["variant"] == "probe"
+    ckpt = torch.load(run_dir / "checkpoint.pt", weights_only=False)
+    assert ckpt["kinetic_adapter"] is not None
+    with np.load(run_dir / "predictions.npz") as preds:
+        assert {"train", "holdout", "rain"} <= set(preds.files)
+
+
+def test_mismatch_run_summary_names_the_truth_plant(tmp_path):
+    data_dir = _require(RAW_K100)
+    anchor = write_anchor(tmp_path / "A0.npz", data_dir, sigma_tag="0p10")
+    summary = _trainer(tmp_path, data_dir=data_dir, anchor_file=str(anchor), steps_quick=1).train()
+    assert all(key in summary for key in SUMMARY_KEYS)
+    assert summary["truth_preset"] != "vault20"
+    assert summary["constant_from"] == "nominal"
+    assert summary["data_dir"] == str(data_dir)
+    assert summary["learned_multipliers"] == {} and summary["trainable_kinetics"] == []

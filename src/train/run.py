@@ -645,7 +645,11 @@ class Trainer:
         out_dir.mkdir(parents=True, exist_ok=True)
 
         torch.save(
-            {"state_dict": self.model.state_dict(), "config": asdict(self.cfg)},
+            {
+                "state_dict": self.model.state_dict(),
+                "kinetic_adapter": None if self.adapter is None else self.adapter.state_dict(),
+                "config": asdict(self.cfg),
+            },
             out_dir / "checkpoint.pt",
         )
         (out_dir / "history.json").write_text(
@@ -658,7 +662,9 @@ class Trainer:
         }
         rain_path = dataset_path(self.cfg, "rain")
         if rain_path.exists():
-            predictions["rain"] = self.predict(ObservationDataset.load(rain_path))
+            predictions["rain"] = self.predict(
+                view_dataset(ObservationDataset.load(rain_path), self.cfg.influent_mode)
+            )
         np.savez_compressed(out_dir / "predictions.npz", **predictions)
 
         summary = {
@@ -672,6 +678,16 @@ class Trainer:
             "total_derivative": self.cfg.total_derivative,
             "ras_filter_window": self.cfg.ras_filter_window,
             "variant": self.cfg.variant,
+            "data_dir": self.cfg.data_dir,
+            "truth_preset": self.provenance["truth_preset"],
+            "alpha": self.provenance["alpha"],
+            "constant_from": self.provenance["constant_from"],
+            "anchor_file": self.cfg.anchor_file,
+            "anchor": None if self.anchor is None else self.anchor.name,
+            "influent_mode": self.cfg.influent_mode,
+            "target_channels": [c.name for c in self.target_channels],
+            "trainable_kinetics": list(self.cfg.trainable_kinetics),
+            "learned_multipliers": self.learned_multipliers(),
             "profile": self.cfg.profile,
             "train_end_day": self.cfg.train_end_day,
             "holdout_days": list(self.cfg.holdout_days),
@@ -679,7 +695,7 @@ class Trainer:
             "schedule": self.schedule.describe(),
             "device": str(self.device),
             "dtype": self.cfg.dtype,
-            "n_parameters": int(sum(p.numel() for p in self.model.parameters())),
+            "n_parameters": int(sum(p.numel() for p in self.trainable_parameters())),
             "train_seconds": elapsed,
             "peak_gpu_bytes": (
                 int(torch.cuda.max_memory_allocated(self.device))
