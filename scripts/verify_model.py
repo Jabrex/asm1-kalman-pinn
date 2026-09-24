@@ -1,7 +1,14 @@
 """RUNBOOK step 6 - model-side verification, before any benchmark run is trusted.
 
-6a  autograd          the active derivative mode against central finite differences
-6b  mode agreement    forward-mode JVP against the reverse-mode VJP loop
+6a_partial          the v1.0 quantity: dZ/dt in t alone, influent held fixed,
+                    against a central difference in t alone. Kept for the
+                    record; it cannot see a missing influent path.
+6a' total           the v1.1 quantity: dZ/dt along the piecewise-linear
+                    influent trajectory against the trajectory central
+                    difference (model(t+h, u(t+h)) - model(t-h, u(t-h))) / 2h,
+                    at times that sit off the 15-min knots
+6b  mode agreement    forward-mode JVP against the reverse-mode VJP loop, on
+                      the total derivative
 6c  physics wiring    the residual actually reaches the parameters: its gradient
                       is non-zero, and a short run with the physics weight on
                       leaves a materially smaller residual than one with it off
@@ -32,9 +39,12 @@ TOL_AUTOGRAD = 1e-4
 TOL_MODE_AGREEMENT = 1e-6
 PROBE_STEPS = 200
 PROBE_NOISE = 0.05
+#: Off-knot evaluation times for gate 6a': 0.6 + 0.25 k days sit 0.4 of a
+#: 15-min sample past a knot, far from any slope change at h = 1e-6.
+OFF_KNOT_TIMES = 0.5 + np.arange(16) * 0.25 + 0.1
 
 
-def _trainer(model: str = "cl_pinn", steps: int = PROBE_STEPS) -> Trainer:
+def _trainer(model: str = "cl_pinn", steps: int = PROBE_STEPS, total_derivative: bool = True) -> Trainer:
     cfg = RunConfig(
         run_id="_verify_%s" % model,
         model=model,
@@ -44,12 +54,36 @@ def _trainer(model: str = "cl_pinn", steps: int = PROBE_STEPS) -> Trainer:
         log_every=max(steps // 4, 1),
         dtype="float64",
         device="cpu",
+        total_derivative=total_derivative,
     )
     return Trainer(cfg)
 
 
+def _influent_at(trainer: Trainer, times: np.ndarray) -> tuple[torch.Tensor, ...]:
+    """``(q, z, dq/dt, dz/dt)`` on the dry grid: linear interpolation and segment slopes."""
+    dry = trainer.data["dry"]
+    grid = np.asarray(dry.t, dtype=float)
+    q = np.interp(times, grid, dry.q_in)
+    z = np.stack([np.interp(times, grid, dry.z_in[:, j]) for j in range(dry.z_in.shape[1])], -1)
+    idx = np.clip(np.searchsorted(grid, times, "right") - 1, 0, len(grid) - 2)
+    span = grid[idx + 1] - grid[idx]
+    dq = (dry.q_in[idx + 1] - dry.q_in[idx]) / span
+    dz = (dry.z_in[idx + 1] - dry.z_in[idx]) / span[:, None]
+
+    def T(x):
+        return torch.as_tensor(np.asarray(x), dtype=trainer.dtype)
+
+    return T(q).view(-1, 1), T(z), T(dq).view(-1, 1), T(dz)
+
+
+def _per_output_relative(a: torch.Tensor, b: torch.Tensor) -> float:
+    """Max |a - b| over samples, normalised per output by that output's largest magnitude."""
+    col = torch.maximum(a.abs(), b.abs()).amax(dim=0, keepdim=True).clamp(min=1e-12)
+    return float(((a - b).abs() / col).max())
+
+
 def gate_6a(trainer: Trainer) -> tuple[bool, dict]:
-    """Autograd derivative against a central finite difference."""
+    """6a_partial (v1.0 quantity): partial derivative in t against a central difference in t."""
     model = trainer.model
     t = torch.linspace(0.5, 6.0, 8, dtype=trainer.dtype).view(-1, 1).requires_grad_(True)
     dry = trainer.data["dry"]
@@ -82,23 +116,52 @@ def gate_6a(trainer: Trainer) -> tuple[bool, dict]:
     }
 
 
-def gate_6b(trainer: Trainer) -> tuple[bool, dict]:
-    """Forward-mode and reverse-mode derivatives must agree to machine accuracy."""
+def gate_6a_total(trainer: Trainer) -> tuple[bool, dict]:
+    """6a': total derivative along the influent trajectory against the trajectory central difference.
+
+    Relative error is taken per output (normalised by that output's largest
+    magnitude over the probe times), because a pointwise ratio is dominated by
+    outputs whose derivative happens to pass through zero. The partial
+    derivative is scored the same way to show the gate can tell them apart.
+    """
     model = trainer.model
-    t = torch.linspace(0.5, 6.0, 5, dtype=trainer.dtype).view(-1, 1).requires_grad_(True)
-    dry = trainer.data["dry"]
-    q = torch.as_tensor(np.interp(t.detach().numpy().ravel(), dry.t, dry.q_in),
-                        dtype=trainer.dtype).view(-1, 1)
-    z = torch.as_tensor(
-        np.stack([np.interp(t.detach().numpy().ravel(), dry.t, dry.z_in[:, j])
-                  for j in range(dry.z_in.shape[1])], -1),
-        dtype=trainer.dtype,
-    )
-    _, fwd = model.state_and_derivative(t, q, z, mode="forward")
-    _, rev = model.state_and_derivative(t, q, z, mode="reverse")
+    times = OFF_KNOT_TIMES.astype(float)
+    t = torch.as_tensor(times, dtype=trainer.dtype).view(-1, 1).requires_grad_(True)
+    q, z, dq, dz = _influent_at(trainer, times)
+    _, d_tot = model.state_and_derivative(t, q, z, dq_dt=dq, dz_dt=dz)
+    _, d_par = model.state_and_derivative(t, q, z)
+
+    h = 1e-6
+    with torch.no_grad():
+        tt = t.detach()
+        qp, zp, _, _ = _influent_at(trainer, times + h)
+        qm, zm, _, _ = _influent_at(trainer, times - h)
+        fd = (model(tt + h, qp, zp) - model(tt - h, qm, zm)) / (2.0 * h)
+
+    d_tot, d_par = d_tot.detach(), d_par.detach()
+    err = _per_output_relative(d_tot, fd)
+    pointwise = float(((d_tot - fd).abs() / torch.maximum(d_tot.abs(), fd.abs()).clamp(min=1e-8)).max())
+    return err < TOL_AUTOGRAD, {
+        "mode": model.cfg.derivative_mode,
+        "max_per_output_relative_error_total": err,
+        "max_pointwise_relative_error_total": pointwise,
+        "max_per_output_relative_error_partial_vs_trajectory": _per_output_relative(d_par, fd),
+        "step_h": h,
+        "n_times": int(len(times)),
+    }
+
+
+def gate_6b(trainer: Trainer) -> tuple[bool, dict]:
+    """Forward-mode and reverse-mode total derivatives must agree to machine accuracy."""
+    model = trainer.model
+    times = OFF_KNOT_TIMES[:5].astype(float)
+    t = torch.as_tensor(times, dtype=trainer.dtype).view(-1, 1).requires_grad_(True)
+    q, z, dq, dz = _influent_at(trainer, times)
+    _, fwd = model.state_and_derivative(t, q, z, mode="forward", dq_dt=dq, dz_dt=dz)
+    _, rev = model.state_and_derivative(t, q, z, mode="reverse", dq_dt=dq, dz_dt=dz)
     scale = torch.maximum(fwd.abs(), rev.abs()).clamp(min=1e-12)
     err = float(((fwd - rev).abs() / scale).max())
-    return err < TOL_MODE_AGREEMENT, {"max_relative_difference": err}
+    return err < TOL_MODE_AGREEMENT, {"max_relative_difference_total": err}
 
 
 def gate_6c() -> tuple[bool, dict]:
@@ -110,7 +173,8 @@ def gate_6c() -> tuple[bool, dict]:
     batch = with_physics._stage_tensors(first_stage)
     colloc = with_physics._collocation(first_stage, batch)
     z_c, dz_c = with_physics.model.state_and_derivative(
-        colloc["t"], colloc["q_in"], colloc["z_in"]
+        colloc["t"], colloc["q_in"], colloc["z_in"],
+        dq_dt=colloc["dq_dt"], dz_dt=colloc["dz_dt"],
     )
     residual = with_physics.loss.physics_residual(
         z_c, dz_c, colloc["q_in"], colloc["z_in"], colloc["tss_ras"]
@@ -144,7 +208,8 @@ def _final_residual(model: str) -> float:
     batch = trainer._stage_tensors(stage)
     colloc = trainer._collocation(stage, batch)
     z_c, dz_c = trainer.model.state_and_derivative(
-        colloc["t"], colloc["q_in"], colloc["z_in"]
+        colloc["t"], colloc["q_in"], colloc["z_in"],
+        dq_dt=colloc["dq_dt"], dz_dt=colloc["dz_dt"],
     )
     residual = trainer.loss.physics_residual(
         z_c, dz_c, colloc["q_in"], colloc["z_in"], colloc["tss_ras"]
@@ -183,8 +248,9 @@ def main() -> int:
 
     failures = []
     for name, fn in (
-        ("6a autograd vs finite difference", lambda: gate_6a(trainer)),
-        ("6b forward vs reverse mode", lambda: gate_6b(trainer)),
+        ("6a_partial (v1.0 quantity)", lambda: gate_6a(trainer)),
+        ("6a' total derivative vs trajectory FD", lambda: gate_6a_total(trainer)),
+        ("6b forward vs reverse mode (total)", lambda: gate_6b(trainer)),
         ("6c physics term is wired and effective", gate_6c),
         ("6d no ground-truth leakage", lambda: gate_6d(_trainer())),
     ):
