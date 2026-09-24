@@ -205,3 +205,71 @@ def test_one_14_day_filter_and_smoother_pass_is_fast(model, dry):
                   EkfConfig(q_soluble=0.1, q_particulate=0.03), ras_log_var=rv)
     rts_smooth(res)
     assert time.perf_counter() - started <= 180.0
+
+
+# --------------------------------------------------------------------------
+# Kalman filter: augmented state, IEKS, forecast, q tuning
+# --------------------------------------------------------------------------
+import json  # noqa: E402
+
+from src.observers.ekf import channel_weights, forecast, ieks, tune_q  # noqa: E402
+
+
+def test_augmented_filter_keeps_exact_kinetics_on_twin_data(model, dry):
+    """Twin data from the reduced model itself; on real data the multipliers drift."""
+    ds = dry["0p00"]
+    (t, _, _, q, zin, _), _ = _window(ds, 2.0)
+    ras = ds.obs[ds.t <= 2.0 + 1e-9, _cols(ds)[1]]
+    traj = model.integrate_expo(_initial_state(ds), t, q, zin, ras)
+    w = channel_weights(model, TARGET_CHANNELS)
+    y = (traj.reshape(len(t), -1) @ w.T) * (1 + 0.02 * np.random.default_rng(11).normal(size=(len(t), 7)))
+    cfg = EkfConfig(q_soluble=1e-3, q_particulate=1e-3, q_theta=0.0, augment=("muH", "bH"))
+    res = run_ekf(model, t, y, TARGET_CHANNELS, q, zin, ras, _initial_state(ds),
+                  np.full((5, 14), 0.01), cfg)
+    assert not res.diverged and np.all(np.abs(res.multipliers()[-1] - 1.0) < 0.05)
+
+
+def test_forecast_is_the_open_loop_from_the_given_state(model, dry):
+    ds = dry["0p10"]
+    sel = (ds.t >= 12.0 - 1e-9) & (ds.t <= 12.5 + 1e-9)
+    ras = trailing_average(ds.obs[:, _cols(ds)[1]], 4)[sel]
+    x = np.log(_initial_state(ds)).reshape(-1)
+    ol = model.integrate_expo(_initial_state(ds), ds.t[sel], ds.q_in[sel], ds.z_in[sel], ras)
+    np.testing.assert_array_equal(forecast(model, x, ds.t[sel], ds.q_in[sel], ds.z_in[sel], ras), ol)
+    aug = forecast(model, np.concatenate([x, [0.0]]), ds.t[sel], ds.q_in[sel], ds.z_in[sel], ras,
+                   names=("muA",))
+    np.testing.assert_allclose(aug, ol, rtol=1e-12, atol=0.0)
+
+
+def test_ieks_runs_its_relinearisations(model, dry):
+    ds = dry["0p10"]
+    args, rv = _window(ds, 1.0)
+    cfg = EkfConfig(q_soluble=0.1, q_particulate=0.03)
+    it = ieks(model, *args, _initial_state(ds), np.full((5, 14), 0.05), cfg, ras_log_var=rv)
+    assert 1 <= it.iterations <= cfg.ieks_iterations and np.all(np.isfinite(it.changes))
+    assert it.converged or it.changes == sorted(it.changes, reverse=True)
+
+
+def test_tune_q_selects_by_the_declared_criterion(model, dry):
+    ds = dry["0p10"]
+    args, rv = _window(ds, 1.0)
+    call = lambda c: tune_q(model, *args, _initial_state(ds), np.full((5, 14), 0.05), EkfConfig(),  # noqa: E731
+                            ras_log_var=rv, grid=(0.01, 0.1), criterion=c, horizon_steps=8, stride=16)
+    inn, pred = call("innovation"), call("predictive")
+    best = max(inn.table, key=lambda row: row["loglik"])
+    low = min(pred.table, key=lambda row: row["predictive_score"])
+    assert len(inn.table) == 4
+    assert (inn.q_soluble, inn.q_particulate) == (best["q_soluble"], best["q_particulate"])
+    assert (pred.q_soluble, pred.q_particulate) == (low["q_soluble"], low["q_particulate"])
+    assert inn.on_grid_edge == (0.1 in (inn.q_soluble, inn.q_particulate))
+    with pytest.raises(ValueError):
+        call("truth")
+
+
+def test_tuned_filter_is_statistically_consistent():
+    """NIS/m in [0.5, 2] at K0-Ie-A0, sigma 0.10, tuned q (reads the Task 3.10 run)."""
+    path = REPO / "results/v11/observers/k000_ie_a0/eks_sigma0p10/summary.json"
+    if not path.exists():
+        pytest.skip("run configs/observers/k000_ie_a0.yaml first")
+    info = json.loads(path.read_text(encoding="utf-8"))
+    assert 0.5 <= info["nis_mean"] / info["n_channels"] <= 2.0

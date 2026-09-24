@@ -228,3 +228,109 @@ def rts_smooth(result: EkfResult) -> SmoothResult:
         pk = result.P_filt[k] + gain @ (Ps[k + 1] - pp) @ gain.T
         Ps[k] = 0.5 * (pk + pk.T)
     return SmoothResult(t=result.t, x=xs, P=Ps, names=result.names)
+
+
+@dataclass
+class IeksResult:
+    smooth: SmoothResult
+    filter: EkfResult
+    iterations: int
+    converged: bool
+    changes: list[float] = field(default_factory=list)
+
+
+@dataclass
+class QSelection:
+    q_soluble: float
+    q_particulate: float
+    criterion: str
+    on_grid_edge: bool
+    table: list[dict]
+
+
+def ieks(model: ReducedPlantModel, t, y_obs, channels, q_in, z_in, tss_ras, z0_mean, z0_rel_std,
+         cfg: EkfConfig, *, ras_log_var: float = 0.0, r: np.ndarray | None = None,
+         first: SmoothResult | None = None) -> IeksResult:
+    """Iterated EKS: refilter linearised on the last smoothed trajectory until
+    ``max |dx| < cfg.ieks_tol`` (log units) or ``cfg.ieks_iterations`` passes."""
+    args = (model, t, y_obs, channels, q_in, z_in, tss_ras, z0_mean, z0_rel_std, cfg)
+    if first is None:
+        res = run_ekf(*args, ras_log_var=ras_log_var, r=r)
+        if res.diverged:
+            return IeksResult(SmoothResult(res.t, res.x_filt, res.P_filt, res.names), res, 0, False)
+        first = rts_smooth(res)
+    current, changes, res = first, [], None
+    for it in range(1, int(cfg.ieks_iterations) + 1):
+        res = run_ekf(*args, ras_log_var=ras_log_var, r=r, nominal=current.x)
+        if res.diverged:
+            return IeksResult(current, res, it, False, changes)
+        new = rts_smooth(res)
+        changes.append(float(np.max(np.abs(new.x - current.x))))
+        current = new
+        if changes[-1] < cfg.ieks_tol:
+            return IeksResult(current, res, it, True, changes)
+    return IeksResult(current, res, int(cfg.ieks_iterations), False, changes)
+
+
+def forecast(model: ReducedPlantModel, x_start, t, q_in, z_in, tss_ras,
+             names: Sequence[str] = (), substeps: int = 3) -> np.ndarray:
+    """Open-loop mean ``(n, 5, 14)`` from the log state at ``t[0]``; with ``names`` the
+    trailing entries of ``x_start`` are log multipliers on those constants."""
+    x_start = np.asarray(x_start, dtype=float)
+    params = None
+    if names:
+        logm = x_start[model.size: model.size + len(names)]
+        params = {nm: model.parameters[nm] * float(np.exp(lm)) for nm, lm in zip(names, logm)}
+    return model.integrate_expo(np.exp(x_start[: model.size]), t, q_in, z_in, tss_ras,
+                                params=params, substeps=substeps)
+
+
+def predictive_score(model: ReducedPlantModel, result: EkfResult, y_obs, channels, q_in, z_in,
+                     tss_ras, horizon_steps: int = 24, stride: int = 24) -> float:
+    """Mean R-normalised squared log error of open-loop predictions of the measured
+    channels, ``horizon_steps`` ahead from every ``stride``-th filtered state."""
+    if result.diverged:
+        return float("inf")
+    series = InputSeries(result.t, q_in, z_in, tss_ras)
+    w = channel_weights(model, channels)
+    logy = _log_obs(np.asarray(y_obs, dtype=float).reshape(series.n, -1))
+    names = result.names
+    base = np.array([model.parameters[nm] for nm in names]) if names else None
+    total, count = 0.0, 0
+    for k in range(0, series.n - horizon_steps, stride):
+        s = result.x_filt[k].copy()
+        for j in range(horizon_steps):
+            s = model.step(s, series.t[k + j], series.dt, series, names, base,
+                           result.cfg.substeps)[0]
+            yp = w @ np.exp(s[: model.size])
+            total += float(np.sum((logy[k + j + 1] - np.log(yp)) ** 2 / result.r))
+            count += len(result.r)
+    return total / max(count, 1)
+
+
+def tune_q(model: ReducedPlantModel, t, y_obs, channels, q_in, z_in, tss_ras, z0_mean,
+           z0_rel_std, cfg: EkfConfig, *, ras_log_var: float = 0.0, r: np.ndarray | None = None,
+           grid: Sequence[float] = Q_GRID, criterion: str = "innovation",
+           horizon_steps: int = 24, stride: int = 24) -> QSelection:
+    """Pick ``(q_soluble, q_particulate)`` on ``grid x grid`` from measured channels only
+    (pass days 0-12). Both scores are kept in ``table``; ``criterion`` decides."""
+    if criterion not in Q_CRITERIA:
+        raise ValueError("criterion must be one of %s, got %r" % (Q_CRITERIA, criterion))
+    table: list[dict] = []
+    for qs in grid:
+        for qp in grid:
+            c = replace(cfg, q_soluble=float(qs), q_particulate=float(qp))
+            res = run_ekf(model, t, y_obs, channels, q_in, z_in, tss_ras, z0_mean, z0_rel_std, c,
+                          ras_log_var=ras_log_var, r=r, store=False)
+            table.append({
+                "q_soluble": float(qs), "q_particulate": float(qp), "loglik": res.loglik,
+                "nis_mean": None if res.diverged else float(np.nanmean(res.nis)),
+                "predictive_score": predictive_score(model, res, y_obs, channels, q_in, z_in,
+                                                     tss_ras, horizon_steps, stride),
+                "diverged": bool(res.diverged),
+            })
+    best = (max(table, key=lambda row: row["loglik"]) if criterion == "innovation"
+            else min(table, key=lambda row: row["predictive_score"]))
+    top = max(grid)
+    return QSelection(best["q_soluble"], best["q_particulate"], criterion,
+                      bool(best["q_soluble"] == top or best["q_particulate"] == top), table)
