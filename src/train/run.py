@@ -14,10 +14,17 @@ term and the curriculum rather than incidental differences.
 
 Leakage discipline
 ------------------
-The only ground truth that reaches the optimiser is: the seven measured target
-channels, the measured ``TSS_ras`` input, the known influent, and the initial
-state ``Z(0)``. ``ObservationDataset.truth_reactor`` is read exclusively inside
+The only ground truth that reaches the optimiser is: the measured target
+channels, the measured ``TSS_ras`` input, the known influent (or the view of it
+selected by ``influent_mode``), and the initial state ``Z(0)``.
+``ObservationDataset.truth_reactor`` is read exclusively inside
 ``torch.no_grad()`` evaluation blocks. ``tests/test_leakage.py`` asserts this.
+
+v1.1 regime runs (``anchor_file`` set) never read ``truth_reactor`` at all: the
+initial state is the anchor mean ``z0_mean`` for the dry stages and the nominal
+steady state ``nominal_ss`` for the constant-load stage, whose data the nominal
+plant generated. The estimator plant is always the audited vault, whatever
+truth plant produced the data; ``Trainer.__init__`` checks this.
 """
 
 from __future__ import annotations
@@ -32,10 +39,19 @@ import numpy as np
 import torch
 
 from ..asm1.plant import Bsm1Plant
-from ..data.sensors import SENSOR_SET, ObservationDataset, unobserved_components
+from ..asm1.vault_loader import vault
+from ..data.influent_views import view_dataset
+from ..data.sensors import (
+    CANDIDATE_CHANNELS,
+    SENSOR_SET,
+    ObservationDataset,
+    SensorChannel,
+    unobserved_components,
+)
 from ..models.losses import Asm1Loss, LossWeights, ObservationOperator
 from ..models.lstm import Asm1Lstm, LstmConfig
 from ..models.pinn import Asm1Pinn, PinnConfig, component_scale
+from ..observers.anchors import ic_weights_from_rel_std
 from . import curriculum as cl
 
 #: Channels that are prediction targets. ``TSS_ras`` is a settler measurement
@@ -60,6 +76,15 @@ MODEL_SPECS: dict[str, dict[str, str]] = {
     "cl_pinn_sonly": {"arch": "pinn", "curriculum": "scenario_only"},
     "cl_pinn_smonly": {"arch": "pinn", "curriculum": "smoothing_only"},
 }
+
+#: Every channel a run may name in ``target_channels``.
+KNOWN_CHANNELS: dict[str, SensorChannel] = {
+    c.name: c for c in (*SENSOR_SET, *CANDIDATE_CHANNELS)
+}
+#: Anchor-file arrays the Trainer reads; each is (n_tanks, n_components).
+ANCHOR_KEYS: tuple[str, ...] = ("z0_mean", "z0_rel_std", "nominal_ss")
+#: Influent knowledge modes of src.data.influent_views (group G2).
+INFLUENT_MODES: tuple[str, ...] = ("exact", "composite", "composite_biased")
 
 
 @dataclass
@@ -93,6 +118,14 @@ class RunConfig:
     ras_filter_window: int = 1
     # Free-form suffix appended to the run id by scripts/run_all.py variants.
     variant: str = ""
+    # v1.1 regime settings. Every default reproduces the v1.0 run bit for bit.
+    anchor_file: str | None = None          # None: truth Z(0) as in v1.0 (A0)
+    influent_mode: str = "exact"            # src.data.influent_views modes
+    target_channels: list[str] | None = None  # None: TARGET_CHANNELS
+    trainable_kinetics: list[str] = field(default_factory=list)
+    kinetic_prior_sigma: float = 0.693      # prior sd of each log-multiplier (ln 2)
+    kinetic_prior_weight: float = 1e-3
+    kinetic_bound: float = 4.0              # multipliers stay in [1/bound, bound]
     pinn: dict[str, Any] = field(default_factory=dict)
     lstm: dict[str, Any] = field(default_factory=dict)
 
@@ -128,33 +161,182 @@ def dataset_path(cfg: RunConfig, scenario: str) -> Path:
     return Path(cfg.data_dir) / ("obs_%s_sigma%s.npz" % (scenario, sigma_tag))
 
 
+def resolve_target_channels(
+    names: list[str] | None, available: tuple[str, ...]
+) -> tuple[SensorChannel, ...]:
+    """Target channels by name; ``None`` keeps the v1.0 set."""
+    if names is None:
+        return TARGET_CHANNELS
+    names = list(names)
+    if not names:
+        raise ValueError("target_channels is empty; use null for the default set")
+    if len(set(names)) != len(names):
+        raise ValueError("target_channels has duplicates: %s" % (names,))
+    out: list[SensorChannel] = []
+    for name in names:
+        if name == RAS_CHANNEL:
+            raise ValueError(
+                "%s is the measured input of the recycle reconstruction and can "
+                "never be a target" % RAS_CHANNEL
+            )
+        channel = KNOWN_CHANNELS.get(name)
+        if channel is None:
+            raise ValueError(
+                "Unknown target channel %r; expected one of %s" % (name, sorted(KNOWN_CHANNELS))
+            )
+        if channel.kind == "tss_underflow":
+            raise ValueError("Channel %r is a measured input, not a target" % (name,))
+        if name not in available:
+            raise ValueError(
+                "Target channel %r is not in the dataset (channels %s); generate the "
+                "data with --candidate-channels" % (name, list(available))
+            )
+        out.append(channel)
+    return tuple(out)
+
+
+@dataclass(frozen=True)
+class Anchor:
+    """Initial-state knowledge from scripts/make_anchors.py (group G3)."""
+
+    path: str
+    name: str
+    z0_mean: np.ndarray
+    z0_rel_std: np.ndarray
+    nominal_ss: np.ndarray
+    meta: dict[str, Any]
+
+
+def load_anchor(path: str, shape: tuple[int, int]) -> Anchor:
+    """Read and validate an anchor file; the Trainer's only source of Z(0) when set."""
+    with np.load(Path(path), allow_pickle=False) as data:
+        missing = [key for key in ANCHOR_KEYS if key not in data.files]
+        if missing:
+            raise ValueError("Anchor file %s lacks %s" % (path, missing))
+        arrays = {key: np.array(data[key], dtype=float) for key in ANCHOR_KEYS}
+        meta = json.loads(str(data["meta"])) if "meta" in data.files else {}
+    for key, value in arrays.items():
+        if value.shape != shape:
+            raise ValueError("Anchor %s: %s has shape %s, expected %s" % (path, key, value.shape, shape))
+        if not np.isfinite(value).all():
+            raise ValueError("Anchor %s: %s is not finite" % (path, key))
+    if (arrays["z0_mean"] < 0.0).any() or (arrays["nominal_ss"] < 0.0).any():
+        raise ValueError("Anchor %s: negative concentrations" % (path,))
+    if (arrays["z0_rel_std"] <= 0.0).any():
+        raise ValueError("Anchor %s: z0_rel_std must be positive" % (path,))
+    return Anchor(
+        path=str(path),
+        name=str(meta.get("name", Path(path).stem)),
+        z0_mean=arrays["z0_mean"],
+        z0_rel_std=arrays["z0_rel_std"],
+        nominal_ss=arrays["nominal_ss"],
+        meta=meta,
+    )
+
+
+def data_provenance(
+    dry_meta: dict[str, Any], constant_meta: dict[str, Any], anchor_file: str | None
+) -> dict[str, Any]:
+    """Truth-plant labels of the data; refuses mismatch data without an anchor.
+
+    v1.0 datasets carry no ``truth_preset`` and are the vault 20 C plant. For any
+    other truth plant, stage 1 must come from the nominal plant (``constant_from
+    == "nominal"``) and the initial state must come from an anchor file, so the
+    Trainer never reads a truth-plant state.
+    """
+    nominal = dict(vault().parameters)
+    truth_preset = str(dry_meta.get("truth_preset", "vault20"))
+    info = {
+        "truth_preset": truth_preset,
+        "alpha": dry_meta.get("alpha", 0.0),
+        "constant_from": str(constant_meta.get("constant_from", "truth")),
+    }
+    for label, meta in (("dry", dry_meta), ("constant", constant_meta)):
+        preset = str(meta.get("truth_preset", "vault20"))
+        if preset == "vault20" and "parameters" in meta and dict(meta["parameters"]) != nominal:
+            raise ValueError(
+                "The %s dataset says truth_preset 'vault20' but its parameters differ "
+                "from the vault; the data directory is mislabelled" % label
+            )
+    if truth_preset != "vault20":
+        if info["constant_from"] != "nominal":
+            raise ValueError(
+                "Mismatch data (truth_preset %r) needs a constant scenario generated by "
+                "the nominal plant (constant_from 'nominal'), got %r"
+                % (truth_preset, info["constant_from"])
+            )
+        if not anchor_file:
+            raise ValueError(
+                "Mismatch data (truth_preset %r) needs anchor_file: without it the "
+                "Trainer would take Z(0) from the truth plant" % (truth_preset,)
+            )
+    return info
+
+
+def require_nominal_plant(plant: Bsm1Plant) -> None:
+    """The estimator always uses the audited vault, whatever plant made the data."""
+    nominal = vault()
+    same = (
+        dict(plant.vault.parameters) == dict(nominal.parameters)
+        and np.array_equal(plant.vault.nu, nominal.nu)
+        and np.array_equal(plant.vault.composition, nominal.composition)
+    )
+    if not same:
+        raise RuntimeError(
+            "Trainer plant does not use the audited vault parameters, nu and "
+            "composition; truth-plant kinetics must never reach an estimator"
+        )
+
+
 class Trainer:
     def __init__(self, cfg: RunConfig) -> None:
         self.cfg = cfg
         if cfg.model not in MODEL_SPECS:
             raise ValueError("Unknown model %r; expected one of %s" % (cfg.model, sorted(MODEL_SPECS)))
+        if cfg.influent_mode not in INFLUENT_MODES:
+            raise ValueError(
+                "Unknown influent_mode %r; expected one of %s" % (cfg.influent_mode, INFLUENT_MODES)
+            )
         self.device = resolve_device(cfg.device)
         self.dtype = getattr(torch, cfg.dtype)
         torch.manual_seed(cfg.seed)
         np.random.seed(cfg.seed)
 
         self.plant = Bsm1Plant()
+        require_nominal_plant(self.plant)
         self.vault = self.plant.vault
         self.n_tanks = self.plant.cfg.n_tanks
         self.n_components = self.plant.n_components
 
-        self.data = {
+        loaded = {
             "dry": ObservationDataset.load(dataset_path(cfg, "dry")),
             "constant": ObservationDataset.load(dataset_path(cfg, "constant")),
         }
+        self.provenance = data_provenance(
+            loaded["dry"].meta, loaded["constant"].meta, cfg.anchor_file
+        )
+        # The influent view is applied to the full series before any window, so
+        # features, collocation, physics residual and balance loss all see the
+        # same practitioner influent ("exact" is the identity).
+        self.data = {key: view_dataset(ds, cfg.influent_mode) for key, ds in loaded.items()}
         self.train_set = self.data["dry"].window(0.0, cfg.train_end_day)
 
         self.channel_index = {name: i for i, name in enumerate(self.train_set.channels)}
-        self.target_cols = [self.channel_index[c.name] for c in TARGET_CHANNELS]
+        self.target_channels = resolve_target_channels(cfg.target_channels, self.train_set.channels)
+        self.target_cols = [self.channel_index[c.name] for c in self.target_channels]
         self.ras_col = self.channel_index[RAS_CHANNEL]
 
         # Initial condition: a supplied boundary condition for every model.
-        self.z0 = self.train_set.truth_reactor[0].copy()
+        # v1.0 path: the truth state at t = 0. Anchor path: the anchor mean, and
+        # truth_reactor is never read.
+        self.anchor: Anchor | None = None
+        self.nominal_ss: np.ndarray | None = None
+        if cfg.anchor_file:
+            self.anchor = load_anchor(cfg.anchor_file, (self.n_tanks, self.n_components))
+            self.z0 = self.anchor.z0_mean.copy()
+            self.nominal_ss = self.anchor.nominal_ss.copy()
+        else:
+            self.z0 = self.train_set.truth_reactor[0].copy()
         self.state_scale = component_scale(self.z0)
         targets = self.train_set.obs[:, self.target_cols]
         self.target_scale = np.maximum(np.mean(np.abs(targets), axis=0), 1e-9)
@@ -162,15 +344,24 @@ class Trainer:
         self.z_in_scale = np.maximum(np.mean(np.abs(self.train_set.z_in), axis=0), 1e-9)
 
         self.model = self._build_model()
-        self.operator = ObservationOperator(self.plant, TARGET_CHANNELS)
+        self.operator = ObservationOperator(self.plant, self.target_channels)
         # With ic_measured_only the anchor covers only the directly sensed
         # (tank, component) entries; the default anchors the full known state.
         ic_mask = None
         if cfg.ic_measured_only:
             ic_mask = np.zeros((self.n_tanks, self.n_components))
-            for channel in TARGET_CHANNELS:
+            for channel in self.target_channels:
                 if channel.kind == "state":
                     ic_mask[int(channel.tank), self.vault.index(str(channel.component))] = 1.0
+        # Anchor files weight the IC entries by their inverse log-variance
+        # (uniform rel_std gives weight 1 everywhere, i.e. the v1.0 mean). The
+        # constant stage uses the same weights.
+        self.ic_weights: np.ndarray | None = None
+        if self.anchor is not None:
+            self.ic_weights = ic_weights_from_rel_std(self.anchor.z0_rel_std)
+            if ic_mask is not None:
+                self.ic_weights = self.ic_weights * ic_mask
+                ic_mask = None
         self.loss = Asm1Loss(
             plant=self.plant,
             operator=self.operator,
@@ -179,6 +370,7 @@ class Trainer:
             device=self.device,
             dtype=self.dtype,
             ic_mask=ic_mask,
+            ic_weights=self.ic_weights,
         )
         self.schedule = cl.build(
             cfg.curriculum, cfg.steps, cfg.train_end_day, noisy=cfg.noise > 0.0
@@ -251,13 +443,20 @@ class Trainer:
                 np.asarray(x), device=self.device, dtype=dtype or self.dtype
             )
 
+        if self.anchor is not None:
+            # No truth read: the anchor mean for the dry stages, the nominal
+            # steady state for the constant stage (the nominal plant made it).
+            z0_stage = self.nominal_ss if stage.dataset == "constant" else self.z0
+        else:
+            z0_stage = source.truth_reactor[0]
+
         tensors = {
             "t": T(source.t).view(-1, 1),
             "q_in": T(source.q_in).view(-1, 1),
             "z_in": T(source.z_in),
             "targets": T(obs[:, self.target_cols]),
             "tss_ras": T(obs[:, self.ras_col]).view(-1, 1),
-            "z0_true": T(source.truth_reactor[0]).unsqueeze(0),
+            "z0_true": T(z0_stage).unsqueeze(0),
             "t_max": T(float(source.t[-1])),
         }
         self._tensor_cache[key] = tensors
