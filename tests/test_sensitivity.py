@@ -169,3 +169,66 @@ def test_log_measurement_rows(day):
     with pytest.raises(ValueError):
         sens.log_measurement_rows(day["z"], [SensorChannel("TSS_ras", "tss_underflow")], comps)
     assert sens.log_noise_variance([tss], 0.10) == pytest.approx([np.log1p(0.01)])
+
+
+# -- Task 4.2: Fisher information and posterior ------------------------------------
+def _fisher_parts(day):
+    h = sens.log_measurement_rows(day["z"], TARGET_CHANNELS, vault().components)
+    r = sens.log_noise_variance(TARGET_CHANNELS, 0.10)
+    parts = [sens.channel_fisher(None, h[:, j], r[j], cumulative=day["m"]) for j in range(len(TARGET_CHANNELS))]
+    return h, r, parts
+
+
+def test_fisher_is_symmetric_psd_and_additive(day):
+    h, r, parts = _fisher_parts(day)
+    f = sens.fisher_initial_state(day["tl"].phis, h, r)
+    assert np.array_equal(f, f.T)
+    assert np.linalg.eigvalsh(f / np.linalg.norm(f, 2)).min() >= -1e-12
+    assert _rel(f, sum(parts)) < 1e-12
+
+
+def test_removing_a_channel_never_increases_information(day):
+    h, r, parts = _fisher_parts(day)
+    full = sum(parts)
+    scale = np.linalg.norm(full, 2)
+    p0 = np.full(70, np.log1p(0.5 ** 2))
+    ig_full = sens.information_gain(sens.posterior_cov(full, p0), p0)
+    for j in range(len(parts)):
+        sub = sum(p for i, p in enumerate(parts) if i != j)
+        assert np.linalg.eigvalsh((full - sub) / scale).min() >= -1e-10
+        assert np.all(sens.information_gain(sens.posterior_cov(sub, p0), p0) <= ig_full + 1e-12)
+
+
+def test_si_gains_information_only_through_transport(day):
+    comps = vault().components
+    i_si = [k * 14 + comps.index("S_I") for k in range(5)]
+    h, r, parts = _fisher_parts(day)
+    f = sum(parts)
+    assert np.abs(h[:, :, i_si]).max() == 0.0                    # no target channel senses S_I
+    assert np.abs(f[i_si]).max() <= 1e-12 * np.abs(f).max()      # nor does S_I act on what they sense
+    scod = SensorChannel("SCOD_tank5", "linear", tank=4, weights=(("S_I", 1.0), ("S_S", 1.0)),
+                         sigma_override=0.20)
+    h_s = sens.log_measurement_rows(day["z"], [scod], comps)
+    sensed = set(np.nonzero(np.abs(h_s).sum(axis=(0, 1)))[0].tolist())
+    assert sensed == {4 * 14 + comps.index("S_I"), 4 * 14 + comps.index("S_S")}
+    f_s = sens.channel_fisher(None, h_s[:, 0], sens.log_noise_variance([scod], 0.10)[0], cumulative=day["m"])
+    assert np.all(np.diag(f_s)[i_si] > 0.0)                       # tanks 1-4 reached through transport
+
+
+def test_posterior_cov_matches_direct_inverse():
+    rng = np.random.default_rng(3)
+    a = rng.normal(size=(70, 30))
+    f = a @ a.T
+    p0 = rng.uniform(0.01, 0.5, size=70)
+    assert _rel(sens.posterior_cov(f, p0), np.linalg.inv(np.diag(1.0 / p0) + f)) < 1e-9
+    full = np.diag(p0) + 0.001 * np.ones((70, 70))
+    assert _rel(sens.posterior_cov(f, full), np.linalg.inv(np.linalg.inv(full) + f)) < 1e-8
+    ig = sens.information_gain(sens.posterior_cov(f, p0), p0)
+    assert ig.shape == (5, 14) and ig.min() >= 0.0 and ig.max() <= 1.0
+
+
+def test_fisher_eigen_whitens_with_the_prior():
+    w, _ = sens.fisher_eigen(np.diag([4.0, 1.0]), np.array([0.25, 1.0]))
+    assert w == pytest.approx([1.0, 1.0])
+    u_sum, u_split = sens.sum_split_directions(np.ones((5, 14)), vault().components)
+    assert abs(u_sum @ u_split) < 1e-12

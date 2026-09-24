@@ -203,3 +203,144 @@ def log_noise_variance(channels: Sequence[Any], sigma: float) -> np.ndarray:
             raise ValueError("Fisher information needs a positive noise level (channel %r)" % ch.name)
         out.append(np.log1p(s * s))
     return np.asarray(out)
+
+
+# -- Fisher information and posterior -----------------------------------------
+def channel_fisher(phis: np.ndarray | None, h_j: np.ndarray, r_j: float,
+                   cumulative: np.ndarray | None = None) -> np.ndarray:
+    """Initial-state Fisher information of one channel over the window.
+
+    Fisher information is additive over channels (independent noise), so a
+    subset's information is the sum of its channels' matrices.
+    """
+    m = cumulative if cumulative is not None else cumulative_propagators(phis)
+    h_j = np.asarray(h_j, dtype=float)
+    if h_j.shape != (m.shape[0], m.shape[1]):
+        raise ValueError("h_j must be (n, 70) with n = len(phis) + 1; got %s" % (h_j.shape,))
+    w = np.einsum("kn,knm->km", h_j, m)
+    f = w.T @ w / float(r_j)
+    return 0.5 * (f + f.T)
+
+
+def fisher_initial_state(phis: np.ndarray | None, h_rows: np.ndarray, r: np.ndarray,
+                         p0: np.ndarray | None = None,
+                         cumulative: np.ndarray | None = None) -> np.ndarray:
+    """Sum of ``channel_fisher`` over the channels of ``h_rows`` ``(n, m, 70)``.
+
+    With ``p0`` the prior information ``inv(P0)`` is added (posterior
+    information matrix).
+    """
+    m = cumulative if cumulative is not None else cumulative_propagators(phis)
+    f = np.zeros((N_STATE, N_STATE))
+    for j in range(h_rows.shape[1]):
+        f += channel_fisher(None, h_rows[:, j, :], float(r[j]), cumulative=m)
+    if p0 is not None:
+        c = _prior_factor(p0)
+        f += np.linalg.inv(c @ c.T)
+    return f
+
+
+def static_fisher(h_rows: np.ndarray, r: np.ndarray) -> np.ndarray:
+    """Information of one-off measurements of the initial state (lab rows)."""
+    h = np.asarray(h_rows, dtype=float).reshape(-1, N_STATE)
+    return (h / np.asarray(r, dtype=float)[:, None]).T @ h
+
+
+def _prior_factor(p0: np.ndarray) -> np.ndarray:
+    p0 = np.asarray(p0, dtype=float)
+    if p0.ndim == 1:
+        return np.diag(np.sqrt(p0))
+    return np.linalg.cholesky(0.5 * (p0 + p0.T))
+
+
+def prior_variance(p0: np.ndarray) -> np.ndarray:
+    p0 = np.asarray(p0, dtype=float)
+    return p0.copy() if p0.ndim == 1 else np.diag(p0).copy()
+
+
+def posterior_cov(f: np.ndarray, p0: np.ndarray) -> np.ndarray:
+    """``(inv(P0) + F)^-1`` computed as ``C (I + C^T F C)^-1 C^T`` with ``P0 = C C^T``.
+
+    ``p0`` is a vector (diagonal prior) or a full covariance.
+    """
+    c = _prior_factor(p0)
+    k = np.eye(c.shape[1]) + c.T @ f @ c
+    p = c @ cho_solve(cho_factor(0.5 * (k + k.T)), c.T)
+    return 0.5 * (p + p.T)
+
+
+def information_gain(p_post: np.ndarray, p0: np.ndarray) -> np.ndarray:
+    """``IG = 1 - sigma_post / sigma_prior`` per state, shaped ``(5, 14)``."""
+    ratio = np.clip(np.diag(p_post), 0.0, None) / prior_variance(p0)
+    return np.clip(1.0 - np.sqrt(ratio), 0.0, 1.0).reshape(N_TANKS, -1)
+
+
+def window_variance(cov0: np.ndarray, cumulative: np.ndarray) -> np.ndarray:
+    """``diag(M_k P M_k^T)`` for every sample; ``(n, 70)``."""
+    cov0 = np.diag(cov0) if np.ndim(cov0) == 1 else np.asarray(cov0, dtype=float)
+    return np.einsum("kij,kij->ki", cumulative @ cov0, cumulative)
+
+
+def crb_over_range(p_post: np.ndarray, cumulative: np.ndarray, z_traj: np.ndarray,
+                   ranges: np.ndarray) -> np.ndarray:
+    """Window-RMS posterior standard deviation in natural units over the range.
+
+    Delta method: ``sd_z(t) = z(t) * sqrt(diag(M_t P M_t^T))``. ``ranges`` is
+    ``(14,)`` (pooled over tanks, as the fixed-spread NRMSE uses) or ``(5, 14)``.
+    """
+    n = cumulative.shape[0]
+    var = window_variance(p_post, cumulative)
+    sd = np.sqrt(np.clip(var, 0.0, None)) * np.asarray(z_traj, dtype=float).reshape(n, N_STATE)
+    rms = np.sqrt(np.mean(sd ** 2, axis=0)).reshape(N_TANKS, -1)
+    return rms / np.broadcast_to(np.asarray(ranges, dtype=float), rms.shape)
+
+
+def fisher_eigen(f: np.ndarray, p0: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """Eigenvalues (ascending) and eigenvectors of ``F``, prior-whitened if ``p0``.
+
+    Whitened eigenvalue ``lam`` means the posterior variance along that
+    direction is ``1 / (1 + lam)`` of the prior: ``lam < 1`` directions stay
+    prior-dominated (weakly observable).
+    """
+    if p0 is not None:
+        c = _prior_factor(p0)
+        f = c.T @ f @ c
+    w, v = np.linalg.eigh(0.5 * (f + f.T))
+    return w, v
+
+
+def weak_directions(evals: np.ndarray, evecs: np.ndarray, labels: Sequence[str],
+                    n: int = 5, zero_tol: float = 1e-9, top: int = 4) -> dict[str, Any]:
+    """Summary of the weakest non-null directions and the null-space size."""
+    scale = max(float(np.max(np.abs(evals))), 1e-300)
+    null = evals <= zero_tol * scale
+    out = []
+    for i in np.nonzero(~null)[0][:n]:
+        load = evecs[:, i] ** 2
+        order = np.argsort(load)[::-1][:top]
+        out.append({"eigenvalue": float(evals[i]),
+                    "top_states": [[labels[k], float(load[k])] for k in order]})
+    null_load = (evecs[:, null] ** 2).sum(axis=1) if null.any() else np.zeros(len(labels))
+    return {"n_null": int(null.sum()), "n_prior_dominated": int(np.sum(evals < 1.0)),
+            "null_space_states": [labels[k] for k in np.nonzero(null_load > 0.5)[0]],
+            "weakest": out}
+
+
+def sum_split_directions(z0: np.ndarray, components: Sequence[str], a: str = "X_I",
+                         b: str = "X_P") -> tuple[np.ndarray, np.ndarray]:
+    """Unit log-space directions that scale ``a + b`` or move mass from ``b`` to ``a``."""
+    comps = list(components)
+    z = np.asarray(z0, dtype=float).reshape(N_TANKS, len(comps))
+    ia, ib = comps.index(a), comps.index(b)
+    u_sum = np.zeros_like(z)
+    u_sum[:, ia] = 1.0
+    u_sum[:, ib] = 1.0
+    u_split = np.zeros_like(z)
+    u_split[:, ia] = 1.0 / z[:, ia]
+    u_split[:, ib] = -1.0 / z[:, ib]
+    return u_sum.ravel() / np.linalg.norm(u_sum), u_split.ravel() / np.linalg.norm(u_split)
+
+
+def direction_information_gain(p_post: np.ndarray, p0: np.ndarray, u: np.ndarray) -> float:
+    prior = np.diag(p0) if np.ndim(p0) == 1 else np.asarray(p0, dtype=float)
+    return float(1.0 - np.sqrt((u @ p_post @ u) / (u @ prior @ u)))
