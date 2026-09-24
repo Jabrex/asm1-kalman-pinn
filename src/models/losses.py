@@ -21,6 +21,9 @@ Loss terms
 ``L_pos``
     ``relu(-Z)^2``. Structurally zero under the softplus head, kept as a running
     assertion; ``tests/test_losses.py`` checks it stays zero.
+``L_kinetic_prior``
+    Only with trainable kinetic multipliers (KineticAdapter, v1.1): zero-mean
+    Gaussian prior on the log multipliers, as in the augmented EKF.
 ``L_balance``
     Integral COD and N closure over the training window. The pointwise version
     of a continuity check is *also* structurally zero (``r @ C = rho @ (nu @ C)``
@@ -41,10 +44,13 @@ truth is touched.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
+from typing import Mapping, Sequence
 
 import numpy as np
 import torch
+from torch import nn
 
 from ..asm1.model import Asm1Kinetics
 from ..asm1.plant import Bsm1Plant
@@ -71,12 +77,57 @@ class LossParts:
     ic: torch.Tensor
     positivity: torch.Tensor
     balance: torch.Tensor
+    #: Prior on the log kinetic multipliers; zero unless the Trainer adds it.
+    kinetic_prior: torch.Tensor = field(default_factory=lambda: torch.zeros(()))
 
     def detached(self) -> dict[str, float]:
         return {
             name: float(getattr(self, name).detach().cpu())
-            for name in ("total", "data", "physics", "ic", "positivity", "balance")
+            for name in (
+                "total", "data", "physics", "ic", "positivity", "balance", "kinetic_prior",
+            )
         }
+
+
+class KineticAdapter(nn.Module):
+    """Trainable multipliers on a subset of the ASM1 kinetic constants.
+
+    ``m = exp(log(bound) * tanh(raw))`` keeps every multiplier inside
+    ``[1/bound, bound]``. ``raw`` starts at zero, so a fresh adapter gives
+    ``m == 1`` exactly and reproduces the fixed-parameter residual bit for bit.
+    The prior is zero-mean Gaussian on ``log m``, the same prior the augmented
+    Kalman filter places on its log multipliers. Move the adapter with
+    ``.to(device=..., dtype=...)`` together with the network.
+    """
+
+    def __init__(self, names: Sequence[str], bound: float = 4.0) -> None:
+        super().__init__()
+        names = tuple(str(n) for n in names)
+        if not names:
+            raise ValueError("KineticAdapter needs at least one parameter name")
+        if len(set(names)) != len(names):
+            raise ValueError("Duplicate kinetic parameter names: %s" % (names,))
+        if not float(bound) > 1.0:
+            raise ValueError("bound must be greater than 1, got %r" % (bound,))
+        self.names = names
+        self.bound = float(bound)
+        self.log_bound = math.log(self.bound)
+        self.raw = nn.Parameter(torch.zeros(len(names), dtype=torch.float64))
+
+    def log_multipliers(self) -> torch.Tensor:
+        return self.log_bound * torch.tanh(self.raw)
+
+    def multipliers(self) -> torch.Tensor:
+        return torch.exp(self.log_multipliers())
+
+    def overrides(self, base: Mapping[str, float]) -> dict[str, torch.Tensor]:
+        """``{name: base[name] * m}`` for :meth:`Asm1Kinetics.conversion`."""
+        m = self.multipliers()
+        return {name: float(base[name]) * m[i] for i, name in enumerate(self.names)}
+
+    def prior(self, sigma: float) -> torch.Tensor:
+        """``mean((log m / sigma)^2)``."""
+        return torch.mean((self.log_multipliers() / float(sigma)) ** 2)
 
 
 class ObservationOperator:
@@ -137,6 +188,7 @@ class Asm1Loss:
         device: torch.device,
         dtype: torch.dtype = torch.float64,
         ic_mask: np.ndarray | None = None,
+        ic_weights: np.ndarray | None = None,
     ) -> None:
         self.plant = plant
         self.cfg = plant.cfg
@@ -150,9 +202,29 @@ class Asm1Loss:
 
         self.state_scale = T(np.maximum(state_scale, 1e-9))
         self.target_scale = T(np.maximum(target_scale, 1e-9))
-        # Optional (n_tanks, n_components) 0/1 mask restricting the IC anchor
-        # to directly sensed entries; None anchors the full supplied state.
-        self.ic_mask = None if ic_mask is None else T(ic_mask)
+        # Optional (n_tanks, n_components) non-negative weights on the IC
+        # anchor. ``ic_mask`` is the v1.0 name for a 0/1 weight array that
+        # restricts the anchor to directly sensed entries; v1.1 anchors pass
+        # normalised inverse log-variances. None anchors the full state with
+        # equal weight (the v1.0 mean).
+        if ic_mask is not None and ic_weights is not None:
+            raise ValueError("Pass ic_weights or its alias ic_mask, not both")
+        weights = ic_weights if ic_weights is not None else ic_mask
+        if weights is not None:
+            weights = np.asarray(weights, dtype=float)
+            expected = (plant.cfg.n_tanks, plant.n_components)
+            if weights.shape != expected:
+                raise ValueError(
+                    "ic_weights must have shape %s, got %s" % (expected, weights.shape)
+                )
+            if not np.all(np.isfinite(weights)) or np.any(weights < 0.0):
+                raise ValueError("ic_weights must be finite and non-negative")
+            if np.all(weights == 1.0):
+                # Uniform unit weights are the plain v1.0 anchor; take the v1.0
+                # code path so the value is bit-identical rather than equal to
+                # rounding.
+                weights = None
+        self.ic_weights = None if weights is None else T(weights)
         self.volumes = T(self.cfg.volumes).view(1, -1, 1)
         self.kla = T(self.cfg.kla).view(1, -1, 1)
         self.so_sat = T(self.cfg.so_sat)
@@ -170,6 +242,10 @@ class Asm1Loss:
         self.i_so = T(np.array([plant.i_so]), torch.long)
         self.composition = T(plant.vault.composition)  # (14, 3)
 
+    @property
+    def ic_mask(self) -> torch.Tensor | None:
+        return self.ic_weights
+
     # -- physics -----------------------------------------------------------
     def recycle_composition(self, z5: torch.Tensor, tss_ras: torch.Tensor) -> torch.Tensor:
         """Return-sludge composition from tank-5 prediction and measured RAS TSS."""
@@ -186,6 +262,7 @@ class Asm1Loss:
         q_in: torch.Tensor,
         z_in: torch.Tensor,
         tss_ras: torch.Tensor,
+        params: Mapping[str, float | torch.Tensor] | None = None,
     ) -> torch.Tensor:
         """``f_ASM1(Z, u(t))`` for the five reactors; ``z`` is ``(n, 5, 14)``."""
         z5 = z[:, -1, :]
@@ -197,7 +274,7 @@ class Asm1Loss:
         rest = q1.unsqueeze(-1) * (z[:, :-1, :] - z[:, 1:, :]) / self.volumes[:, 1:, :]
         transport = torch.cat([first.unsqueeze(1), rest], dim=1)
 
-        reaction = self.kinetics.conversion(z) * self.reaction_scale
+        reaction = self.kinetics.conversion(z, overrides=params) * self.reaction_scale
 
         aeration = torch.zeros_like(z)
         so = z.index_select(2, self.i_so)              # (n, 5, 1)
@@ -212,9 +289,10 @@ class Asm1Loss:
         q_in: torch.Tensor,
         z_in: torch.Tensor,
         tss_ras: torch.Tensor,
+        params: Mapping[str, float | torch.Tensor] | None = None,
     ) -> torch.Tensor:
         """Scale-normalised ``dZ/dt - f_ASM1(Z, u)``; shape ``(n, 5, 14)``."""
-        return (dz_dt - self.plant_rhs(z, q_in, z_in, tss_ras)) / self.state_scale
+        return (dz_dt - self.plant_rhs(z, q_in, z_in, tss_ras, params)) / self.state_scale
 
     # -- individual terms --------------------------------------------------
     def data_loss(self, z: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
@@ -222,14 +300,13 @@ class Asm1Loss:
         return torch.mean(((pred - targets) / self.target_scale) ** 2)
 
     def ic_loss(self, z0_pred: torch.Tensor, z0_true: torch.Tensor) -> torch.Tensor:
-        if self.ic_mask is None:
+        if self.ic_weights is None:
             return torch.mean(((z0_pred - z0_true) / self.state_scale) ** 2)
-        # Masked entries never touch z0_true, so a NaN there cannot propagate.
-        diff = torch.where(
-            self.ic_mask > 0.0, z0_pred - z0_true, torch.zeros_like(z0_pred)
-        )
+        # Zero-weight entries never touch z0_true, so a NaN there cannot propagate.
+        w = self.ic_weights
+        diff = torch.where(w > 0.0, z0_pred - z0_true, torch.zeros_like(z0_pred))
         sq = (diff / self.state_scale) ** 2
-        return sq.sum() / torch.clamp(self.ic_mask.sum(), min=1.0)
+        return (w * sq).sum() / torch.clamp(w.sum(), min=1.0)
 
     def positivity_loss(self, z: torch.Tensor) -> torch.Tensor:
         return torch.mean(torch.relu(-z / self.state_scale) ** 2)

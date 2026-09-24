@@ -15,7 +15,7 @@ torch = pytest.importorskip("torch")
 from src.asm1.plant import Bsm1Config, Bsm1Plant  # noqa: E402
 from src.data.influent import BSM1_TABLE5_FLOW, stabilisation_influent  # noqa: E402
 from src.data.sensors import SENSOR_SET  # noqa: E402
-from src.models.losses import Asm1Loss, LossWeights, ObservationOperator  # noqa: E402
+from src.models.losses import Asm1Loss, KineticAdapter, LossWeights, ObservationOperator  # noqa: E402
 
 TARGETS = tuple(c for c in SENSOR_SET if c.kind != "tss_underflow")
 
@@ -247,6 +247,84 @@ def test_total_reports_every_term(rig):
         targets=targets, z0_pred=batch["z"][:1], z0_true=batch["z"][:1],
     )
     values = parts.detached()
-    assert set(values) == {"total", "data", "physics", "ic", "positivity", "balance"}
+    assert set(values) == {"total", "data", "physics", "ic", "positivity", "balance", "kinetic_prior"}
     assert all(np.isfinite(v) for v in values.values())
     assert values["ic"] == 0.0
+    assert values["kinetic_prior"] == 0.0
+
+
+# --- v1.1: kinetic params, IC weights, kinetic adapter ------------------------
+def _weighted(plant, operator, **kwargs):
+    return Asm1Loss(plant, operator, np.ones(plant.n_components), np.ones(len(TARGETS)),
+                    torch.device("cpu"), torch.float64, **kwargs)
+
+
+def test_params_none_or_vault_values_are_bit_identical(rig):
+    plant, _, loss = rig
+    b = _batch(plant)
+    args = (b["z"], b["q_in"], b["z_in"], b["tss_ras"])
+    same = {name: plant.vault.p(name) for name in plant.kinetics.rate_parameters}
+    assert torch.equal(loss.plant_rhs(*args, params=None), loss.plant_rhs(*args))
+    assert torch.equal(loss.plant_rhs(*args, params=same), loss.plant_rhs(*args))
+    dz = torch.zeros_like(b["z"])
+    assert torch.equal(loss.physics_residual(b["z"], dz, *args[1:], params=same),
+                       loss.physics_residual(b["z"], dz, *args[1:]))
+
+
+def test_ic_weights_none_and_unit_weights_are_the_v1_mean(rig):
+    plant, operator, loss = rig
+    unit = _weighted(plant, operator, ic_weights=np.ones((5, 14)))
+    assert loss.ic_weights is None and loss.ic_mask is None and unit.ic_weights is None
+    gen = torch.Generator().manual_seed(0)
+    pred, true = (torch.rand(1, 5, 14, dtype=torch.float64, generator=gen) for _ in range(2))
+    assert torch.equal(loss.ic_loss(pred, true), torch.mean((pred - true) ** 2))
+    assert torch.equal(unit.ic_loss(pred, true), loss.ic_loss(pred, true))
+
+
+def test_ic_weights_give_a_nan_safe_weighted_mean_and_validate(rig):
+    plant, operator, _ = rig
+    w = np.random.default_rng(2).uniform(0.2, 3.0, size=(5, 14))
+    w[0, :3] = 0.0
+    weighted = _weighted(plant, operator, ic_weights=w)
+    pred = torch.rand(1, 5, 14, dtype=torch.float64).requires_grad_(True)
+    ref = torch.rand(1, 5, 14, dtype=torch.float64)
+    true = ref.clone()
+    true[0, 0, :3] = float("nan")
+    value = weighted.ic_loss(pred, true)
+    value.backward()
+    assert torch.isfinite(value) and torch.isfinite(pred.grad).all()
+    sq = ((pred.detach() - ref) ** 2).numpy()[0]
+    assert float(value) == pytest.approx(float(np.sum(w * sq) / np.sum(w)), rel=1e-12)
+    mask = (w > 1.0).astype(float)
+    assert _weighted(plant, operator, ic_mask=mask).ic_mask is not None
+    for kwargs, match in (({"ic_mask": mask, "ic_weights": mask}, "not both"),
+                          ({"ic_weights": -np.ones((5, 14))}, "non-negative"),
+                          ({"ic_weights": np.ones(14)}, "shape")):
+        with pytest.raises(ValueError, match=match):
+            _weighted(plant, operator, **kwargs)
+
+
+def test_kinetic_adapter_zero_raw_is_exact_then_bounded_with_prior_and_gradient(rig):
+    plant, _, loss = rig
+    b = _batch(plant)
+    dz = torch.zeros_like(b["z"])
+    args = (b["q_in"], b["z_in"], b["tss_ras"])
+    adapter = KineticAdapter(["muA", "bH"], bound=4.0)
+    assert torch.equal(loss.physics_residual(b["z"], dz, *args,
+                                             params=adapter.overrides(plant.vault.parameters)),
+                       loss.physics_residual(b["z"], dz, *args))
+    assert torch.equal(adapter.multipliers(), torch.ones(2, dtype=torch.float64))
+    assert float(adapter.prior(0.693)) == 0.0
+    with torch.no_grad():
+        adapter.raw.copy_(torch.tensor([50.0, -50.0], dtype=torch.float64))
+    assert adapter.multipliers().tolist() == pytest.approx([4.0, 0.25], rel=1e-12)
+    with torch.no_grad():
+        adapter.raw.copy_(torch.tensor([0.3, -0.2], dtype=torch.float64))
+    log_m = torch.log(adapter.multipliers())
+    assert float(adapter.prior(0.5)) == pytest.approx(float(torch.mean((log_m / 0.5) ** 2)), rel=1e-12)
+    residual = loss.physics_residual(b["z"], dz, *args, params=adapter.overrides(plant.vault.parameters))
+    (residual ** 2).mean().backward()
+    assert bool(torch.all(adapter.raw.grad != 0.0))
+    for names, bound in (([], 4.0), (["muA", "muA"], 4.0), (["muA"], 1.0)):
+        with pytest.raises(ValueError):
+            KineticAdapter(names, bound)
