@@ -256,11 +256,22 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     started, results = time.perf_counter(), []
-    with ProcessPoolExecutor(max_workers=args.workers, initializer=_init_worker) as pool:
-        for res in pool.map(run_job, jobs, [str(out_root)] * len(jobs), [frozen_q] * len(jobs)):
-            results.append(res)
-            print("  %-48s %s" % (res["job"], "ok %.0f s" % res["seconds"] if res["ok"]
-                                  else "FAILED -> " + res["error"]), flush=True)
+
+    def report(res: dict[str, Any]) -> None:
+        results.append(res)
+        print("  %-48s %s" % (res["job"], "ok %.0f s" % res["seconds"] if res["ok"]
+                              else "FAILED -> " + res["error"]), flush=True)
+
+    if args.workers <= 1:
+        # One worker: run in this process. A pool would hold a second copy of torch
+        # (about 0.4 GB) per cell, which halves how many cells fit in memory.
+        _init_worker()
+        for job in jobs:
+            report(run_job(job, str(out_root), frozen_q))
+    else:
+        with ProcessPoolExecutor(max_workers=args.workers, initializer=_init_worker) as pool:
+            for res in pool.map(run_job, jobs, [str(out_root)] * len(jobs), [frozen_q] * len(jobs)):
+                report(res)
     failures = [r for r in results if not r["ok"]]
     print("Finished in %.1f min: %d ok, %d failed"
           % ((time.perf_counter() - started) / 60.0, len(results) - len(failures), len(failures)))
