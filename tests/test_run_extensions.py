@@ -271,3 +271,65 @@ def test_plant_guard_rejects_a_truth_plant(tmp_path, monkeypatch):
     monkeypatch.setattr(run, "Bsm1Plant", lambda: Bsm1Plant(source=altered))
     with pytest.raises(RuntimeError, match="audited vault"):
         _trainer(tmp_path)
+
+
+# ----------------------------------------------------------------------------
+# Task 5.4 - kinetic multipliers
+# ----------------------------------------------------------------------------
+def test_zero_multipliers_reproduce_the_fixed_parameter_residual(tmp_path):
+    trainer = _trainer(tmp_path, model="cl_pinn_theta", trainable_kinetics=THETA)
+    stage = trainer.schedule.stages[-1]
+    batch = trainer._stage_tensors(stage)
+    colloc = trainer._collocation(stage, batch)
+    z_c, dz_c = trainer.model.state_and_derivative(colloc["t"], colloc["q_in"], colloc["z_in"])
+    args = (z_c, dz_c, colloc["q_in"], colloc["z_in"], colloc["tss_ras"])
+    fixed = trainer.loss.physics_residual(*args)
+    learned = trainer.loss.physics_residual(
+        *args, params=trainer.adapter.overrides(trainer.vault.parameters)
+    )
+    assert torch.equal(fixed, learned)
+    assert trainer.learned_multipliers() == {name: 1.0 for name in THETA}
+
+
+def test_gradient_reaches_the_kinetic_multipliers(tmp_path):
+    trainer = _trainer(tmp_path, model="cl_pinn_theta", trainable_kinetics=THETA)
+    stage = trainer.schedule.stages[-1]
+    parts = trainer.step_loss(stage, trainer._weights_for(stage.weights_end))
+    parts.total.backward()
+    grads = [p.grad for p in trainer.adapter.parameters()]
+    assert grads and all(g is not None for g in grads)
+    flat = torch.cat([g.reshape(-1) for g in grads])
+    assert torch.isfinite(flat).all() and bool(torch.all(flat != 0.0))
+
+
+def test_theta_run_keeps_the_cl_pinn_budget_and_initial_loss(tmp_path):
+    # Each Trainer seeds the global generator in __init__, so each one is
+    # trained before the next is built: the collocation draws then match.
+    plain = _trainer(tmp_path, run_id="plain")
+    plain.train()
+    theta = _trainer(tmp_path, run_id="theta", model="cl_pinn_theta", trainable_kinetics=THETA)
+    theta.train()
+    assert plain.schedule.describe() == theta.schedule.describe()
+    assert plain.schedule.total_steps == theta.schedule.total_steps
+    assert len(plain.history) == len(theta.history) == 3
+    keys = ("total", "data", "physics", "ic", "positivity", "balance")
+    assert {k: plain.history[0][k] for k in keys} == {k: theta.history[0][k] for k in keys}
+    assert theta.history[0]["kinetic_prior"] == 0.0
+    learned = theta.learned_multipliers()
+    assert set(learned) == set(THETA)
+    assert all(0.25 <= m <= 4.0 for m in learned.values())
+    assert all("mult_%s" % n in theta.history[-1] for n in THETA)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"model": "cl_pinn_theta"},                                 # empty subset
+        {"model": "cl_pinn", "trainable_kinetics": ["muA"]},        # wrong model
+        {"model": "cl_pinn_theta", "trainable_kinetics": ["YH"]},   # stoichiometric
+        {"model": "cl_pinn_theta", "trainable_kinetics": ["muA", "muA"]},
+    ],
+)
+def test_invalid_kinetic_settings_are_rejected(tmp_path, overrides):
+    with pytest.raises(ValueError, match="trainable_kinetics"):
+        _trainer(tmp_path, **overrides)

@@ -48,7 +48,14 @@ from ..data.sensors import (
     SensorChannel,
     unobserved_components,
 )
-from ..models.losses import Asm1Loss, LossWeights, ObservationOperator
+from ..models.losses import (
+    Asm1Loss,
+    KineticAdapter,
+    LossParts,
+    LossWeights,
+    ObservationOperator,
+    kinetic_parameter_names,
+)
 from ..models.lstm import Asm1Lstm, LstmConfig
 from ..models.pinn import Asm1Pinn, PinnConfig, component_scale
 from ..observers.anchors import ic_weights_from_rel_std
@@ -75,6 +82,9 @@ MODEL_SPECS: dict[str, dict[str, str]] = {
     "cl_pinn_honly": {"arch": "pinn", "curriculum": "horizon_only"},
     "cl_pinn_sonly": {"arch": "pinn", "curriculum": "scenario_only"},
     "cl_pinn_smonly": {"arch": "pinn", "curriculum": "smoothing_only"},
+    # v1.1 joint state-parameter estimation (E7): cl_pinn plus trainable
+    # log-multipliers on RunConfig.trainable_kinetics. Same schedule and budget.
+    "cl_pinn_theta": {"arch": "pinn", "curriculum": "hierarchical"},
 }
 
 #: Every channel a run may name in ``target_channels``.
@@ -297,6 +307,12 @@ class Trainer:
             raise ValueError(
                 "Unknown influent_mode %r; expected one of %s" % (cfg.influent_mode, INFLUENT_MODES)
             )
+        if (cfg.model == "cl_pinn_theta") != bool(cfg.trainable_kinetics):
+            raise ValueError(
+                "trainable_kinetics must be non-empty for cl_pinn_theta and empty for "
+                "every other model (model %r, trainable_kinetics %s)"
+                % (cfg.model, list(cfg.trainable_kinetics))
+            )
         self.device = resolve_device(cfg.device)
         self.dtype = getattr(torch, cfg.dtype)
         torch.manual_seed(cfg.seed)
@@ -372,6 +388,20 @@ class Trainer:
             ic_mask=ic_mask,
             ic_weights=self.ic_weights,
         )
+        # Joint kinetic estimation (cl_pinn_theta). Created after the network so
+        # the network initialisation consumes the same random numbers as cl_pinn.
+        self.adapter: KineticAdapter | None = None
+        if cfg.trainable_kinetics:
+            allowed = kinetic_parameter_names(self.vault)
+            names = list(cfg.trainable_kinetics)
+            unknown = [n for n in names if n not in allowed]
+            if unknown or len(set(names)) != len(names):
+                raise ValueError(
+                    "trainable_kinetics %s must be distinct names from %s" % (names, list(allowed))
+                )
+            self.adapter = KineticAdapter(names, cfg.kinetic_bound).to(
+                device=self.device, dtype=self.dtype
+            )
         self.schedule = cl.build(
             cfg.curriculum, cfg.steps, cfg.train_end_day, noisy=cfg.noise > 0.0
         )
@@ -501,64 +531,89 @@ class Trainer:
         }
 
     # -- training ----------------------------------------------------------
+    def trainable_parameters(self) -> list[torch.nn.Parameter]:
+        """Network parameters, plus the kinetic log-multipliers for cl_pinn_theta."""
+        params = list(self.model.parameters())
+        if self.adapter is not None:
+            params += list(self.adapter.parameters())
+        return params
+
+    def learned_multipliers(self) -> dict[str, float]:
+        if self.adapter is None:
+            return {}
+        values = self.adapter.multipliers().detach().cpu().tolist()
+        return {name: float(m) for name, m in zip(self.cfg.trainable_kinetics, values)}
+
+    def step_loss(self, stage: cl.CurriculumStage, weights: LossWeights) -> LossParts:
+        """All loss terms of one optimisation step; ``weights`` already filtered."""
+        cfg = self.cfg
+        batch = self._stage_tensors(stage)
+        z = self.model(batch["t"], batch["q_in"], batch["z_in"])
+        # The grid starts at t = 0, so the first prediction is the initial
+        # condition. Reusing it keeps the LSTM hidden state consistent with
+        # the sequence it was rolled out on.
+        z0_pred = z[:1]
+
+        if cfg.arch == "pinn" and weights.physics > 0.0:
+            colloc = self._collocation(stage, batch)
+            if cfg.total_derivative:
+                z_c, dz_c = self.model.state_and_derivative(
+                    colloc["t"], colloc["q_in"], colloc["z_in"],
+                    dq_dt=colloc["dq_dt"], dz_dt=colloc["dz_dt"],
+                )
+            else:
+                z_c, dz_c = self.model.state_and_derivative(
+                    colloc["t"], colloc["q_in"], colloc["z_in"]
+                )
+        else:
+            colloc, z_c, dz_c = None, None, None
+
+        parts = self.loss.total(
+            weights=weights,
+            t=batch["t"],
+            z=z,
+            dz_dt=None,
+            q_in=batch["q_in"],
+            z_in=batch["z_in"],
+            tss_ras=batch["tss_ras"],
+            targets=batch["targets"],
+            z0_pred=z0_pred,
+            z0_true=batch["z0_true"],
+        )
+        total = parts.total
+        if z_c is not None:
+            params = None if self.adapter is None else self.adapter.overrides(self.vault.parameters)
+            residual = self.loss.physics_residual(
+                z_c, dz_c, colloc["q_in"], colloc["z_in"], colloc["tss_ras"], params=params
+            )
+            physics = torch.mean(residual ** 2)
+            total = total + weights.physics * physics
+            parts.physics = physics
+            parts.total = total
+        if self.adapter is not None:
+            prior = self.adapter.prior(cfg.kinetic_prior_sigma)
+            total = total + cfg.kinetic_prior_weight * prior
+            parts.kinetic_prior = prior
+            parts.total = total
+        return parts
+
     def train(self) -> dict[str, Any]:
         cfg = self.cfg
-        optimiser = torch.optim.Adam(self.model.parameters(), lr=cfg.lr)
+        trainable = self.trainable_parameters()
+        optimiser = torch.optim.Adam(trainable, lr=cfg.lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimiser, T_max=max(self.schedule.total_steps, 1), eta_min=cfg.lr * cfg.lr_final_fraction
         )
         started = time.perf_counter()
 
         for step, stage, weights in self.schedule.iterate():
-            batch = self._stage_tensors(stage)
             weights = self._weights_for(weights)
             optimiser.zero_grad(set_to_none=True)
+            parts = self.step_loss(stage, weights)
 
-            z = self.model(batch["t"], batch["q_in"], batch["z_in"])
-            # The grid starts at t = 0, so the first prediction is the initial
-            # condition. Reusing it keeps the LSTM hidden state consistent with
-            # the sequence it was rolled out on.
-            z0_pred = z[:1]
-
-            if self.cfg.arch == "pinn" and weights.physics > 0.0:
-                colloc = self._collocation(stage, batch)
-                if cfg.total_derivative:
-                    z_c, dz_c = self.model.state_and_derivative(
-                        colloc["t"], colloc["q_in"], colloc["z_in"],
-                        dq_dt=colloc["dq_dt"], dz_dt=colloc["dz_dt"],
-                    )
-                else:
-                    z_c, dz_c = self.model.state_and_derivative(
-                        colloc["t"], colloc["q_in"], colloc["z_in"]
-                    )
-            else:
-                colloc, z_c, dz_c = None, None, None
-
-            parts = self.loss.total(
-                weights=weights,
-                t=batch["t"],
-                z=z,
-                dz_dt=None,
-                q_in=batch["q_in"],
-                z_in=batch["z_in"],
-                tss_ras=batch["tss_ras"],
-                targets=batch["targets"],
-                z0_pred=z0_pred,
-                z0_true=batch["z0_true"],
-            )
-            total = parts.total
-            if z_c is not None:
-                residual = self.loss.physics_residual(
-                    z_c, dz_c, colloc["q_in"], colloc["z_in"], colloc["tss_ras"]
-                )
-                physics = torch.mean(residual ** 2)
-                total = total + weights.physics * physics
-                parts.physics = physics
-                parts.total = total
-
-            total.backward()
+            parts.total.backward()
             if cfg.grad_clip:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.grad_clip)
+                torch.nn.utils.clip_grad_norm_(trainable, cfg.grad_clip)
             optimiser.step()
             scheduler.step()
 
@@ -566,6 +621,7 @@ class Trainer:
                 record = {"step": step, "stage": stage.name, "lr": scheduler.get_last_lr()[0]}
                 record.update(parts.detached())
                 record.update({"w_%s" % k: v for k, v in weights.__dict__.items()})
+                record.update({"mult_%s" % k: v for k, v in self.learned_multipliers().items()})
                 self.history.append(record)
 
         elapsed = time.perf_counter() - started
