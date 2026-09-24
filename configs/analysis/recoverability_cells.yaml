@@ -4,16 +4,17 @@
 # If gate D3 moves the realistic cells to K.5, replace the three k100_ic_* cells by
 # k050_ic_* (data_dir results/raw_k050, anchors under results/v11/anchors/k050/)
 # BEFORE the pre-registration commit, and keep `primary` pointing at the As cell.
-primary: k100_ic_as
+# Gate D3 fired on 2026-09-24 (EKS 0.994 vs persistence 0.534 at K1-Ic-As, R0): K.5 cells.
+primary: k050_ic_as
 sigma: 0.10
 cells:
   - {name: k000_ie_a0, data_dir: results/raw, anchor: results/v11/anchors/k000/A0.npz, influent_mode: exact}
   - {name: k000_ic_a0, data_dir: results/raw, anchor: results/v11/anchors/k000/A0.npz, influent_mode: composite}
   - {name: k050_ie_a0, data_dir: results/raw_k050, anchor: results/v11/anchors/k050/A0.npz, influent_mode: exact}
   - {name: k100_ie_a0, data_dir: results/raw_k100, anchor: results/v11/anchors/k100/A0.npz, influent_mode: exact}
-  - {name: k100_ic_a0, data_dir: results/raw_k100, anchor: results/v11/anchors/k100/A0.npz, influent_mode: composite}
-  - {name: k100_ic_as, data_dir: results/raw_k100, anchor: results/v11/anchors/k100/As.npz, influent_mode: composite}
-  - {name: k100_ic_al1, data_dir: results/raw_k100, anchor: results/v11/anchors/k100/Al1.npz, influent_mode: composite}
+  - {name: k050_ic_a0, data_dir: results/raw_k050, anchor: results/v11/anchors/k050/A0.npz, influent_mode: composite}
+  - {name: k050_ic_as, data_dir: results/raw_k050, anchor: results/v11/anchors/k050/As.npz, influent_mode: composite}
+  - {name: k050_ic_al1, data_dir: results/raw_k050, anchor: results/v11/anchors/k050/Al1.npz, influent_mode: composite}
 estimators:
   cl_pinn: {kind: pinn, run: cl_pinn_sigma0p10, seeds: [0, 1, 2]}
   eks: {kind: observer, run: eks_sigma0p10}

@@ -183,15 +183,17 @@ def sigma_log_files() -> dict[str, dict]:
 LAB_REALISATIONS = tuple(range(1, 10))
 
 
-def lab_files() -> dict[str, dict]:
-    """Nine extra lab-panel noise seeds for Al1 and Al2 at K1-Ic (added 2026-09-24, before G4).
+def lab_files(realistic: str) -> dict[str, dict]:
+    """Nine extra lab-panel noise seeds for Al1 and Al2 in the realistic cell (added 2026-09-24).
 
-    Anchors in results/v11/anchors/k100_lab/rXX (make_anchors --lab-seed 20260923 + XX).
-    Reported as a spread around the registered seed-20260923 cells, never pooled.
+    Anchors in results/v11/anchors/<k>_lab/rXX (make_anchors --lab-seed 20260923 + XX), with
+    <k> the realistic kinetics of gate D3. Reported as a spread around the registered
+    seed-20260923 cells, never pooled.
     """
     return {
-        "grid/lab/k100_ic_%s_lab%02d" % (a, r): cell("k100_ic_%s_lab%02d" % (a, r), DATA_DIRS["k100"],
-                                                     "k100_lab/r%02d" % r, "ic", a, OBSERVER_ROOT, PAIR, TUNED)
+        "grid/lab/%s_ic_%s_lab%02d" % (realistic, a, r): cell(
+            "%s_ic_%s_lab%02d" % (realistic, a, r), DATA_DIRS[realistic], "%s_lab/r%02d" % (realistic, r),
+            "ic", a, OBSERVER_ROOT, PAIR, TUNED)
         for a in ("al1", "al2") for r in LAB_REALISATIONS
     }
 
@@ -234,7 +236,7 @@ def grid(stage: str, realistic: str | None = None, rands: Sequence[str] = (), ca
     files.update(m0prime_files(augment))
     files.update(random_files(rands, augment))
     files.update(sigma_log_files())
-    files.update(lab_files())
+    files.update(lab_files(realistic))
     files.update(settler_files())
     files.update(sensor_files(candidates))
     return files
