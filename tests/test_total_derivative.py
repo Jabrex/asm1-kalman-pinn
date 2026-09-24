@@ -141,3 +141,117 @@ def test_zero_tangents_equal_the_partial_derivative():
     )
     _, d_par = model.state_and_derivative(t, qq, zz)
     torch.testing.assert_close(d_zero, d_par, rtol=1e-12, atol=1e-14)
+
+
+def test_trailing_average_is_causal_and_correct():
+    from src.train.curriculum import trailing_average
+
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(50, 3))
+    w = 4
+    out = trailing_average(x, w)
+    naive = np.stack([x[max(0, i - w + 1): i + 1].mean(axis=0) for i in range(len(x))])
+    np.testing.assert_allclose(out, naive, rtol=1e-12, atol=1e-12)
+
+    # perturbing sample k must leave every earlier output exactly unchanged
+    k = 20
+    y = x.copy()
+    y[k] += 1e3
+    np.testing.assert_array_equal(trailing_average(y, w)[:k], out[:k])
+    assert not np.allclose(trailing_average(y, w)[k], out[k])
+
+    # 1-D input works, and window <= 1 returns an unchanged copy
+    np.testing.assert_allclose(trailing_average(x[:, 0], w), naive[:, 0], rtol=1e-12)
+    same = trailing_average(x, 1)
+    np.testing.assert_array_equal(same, x)
+    assert same is not x
+
+
+# --- tests that need the generated datasets -----------------------------------
+def _require(path: Path) -> Path:
+    if not path.exists():
+        pytest.skip("needs %s - run 'python -m scripts.generate_data' first" % path.name)
+    return path
+
+
+def _trainer(**overrides):
+    from src.train.run import RunConfig, Trainer
+
+    data_dir = _require(REPO / "results" / "raw" / "obs_dry_sigma0p05.npz").parent
+    kwargs = dict(
+        run_id="_td_probe", model="cl_pinn", noise=0.05, profile="quick", steps_quick=1,
+        device="cpu", dtype="float64", data_dir=str(data_dir), out_dir=tempfile.mkdtemp(),
+    )
+    kwargs.update(overrides)
+    return Trainer(RunConfig(**kwargs))
+
+
+def test_collocation_slopes_are_grid_finite_differences():
+    trainer = _trainer()
+    stage = trainer.schedule.stages[-1]
+    batch = trainer._stage_tensors(stage)
+    torch.manual_seed(3)
+    colloc = trainer._collocation(stage, batch)
+
+    grid = batch["t"].squeeze(-1).numpy()
+    ts = colloc["t"].detach().squeeze(-1).numpy()
+    lo = np.clip(np.searchsorted(grid, ts, "right") - 1, 0, len(grid) - 2)
+    span = grid[lo + 1] - grid[lo]
+    q = batch["q_in"].squeeze(-1).numpy()
+    z = batch["z_in"].numpy()
+    np.testing.assert_allclose(
+        colloc["dq_dt"].squeeze(-1).numpy(), (q[lo + 1] - q[lo]) / span, rtol=1e-9, atol=1e-9
+    )
+    np.testing.assert_allclose(
+        colloc["dz_dt"].numpy(), (z[lo + 1] - z[lo]) / span[:, None], rtol=1e-9, atol=1e-9
+    )
+    assert colloc["dq_dt"].shape == (trainer.cfg.collocation_points, 1)
+    assert colloc["dz_dt"].shape == (trainer.cfg.collocation_points, 14)
+
+
+def test_ras_filter_feeds_the_filtered_signal_to_training():
+    from src.train.curriculum import trailing_average
+
+    base = _trainer()
+    filt = _trainer(ras_filter_window=4)
+    stage = base.schedule.stages[-1]  # smoothing window 1 in the final stage
+    raw = base.data["dry"].window(0.0, stage.horizon_days).obs[:, base.ras_col]
+    got = filt._stage_tensors(stage)["tss_ras"].squeeze(-1).numpy()
+    np.testing.assert_allclose(got, trailing_average(raw, 4), rtol=1e-12)
+    np.testing.assert_array_equal(
+        base._stage_tensors(stage)["tss_ras"].squeeze(-1).numpy(), raw
+    )
+
+
+def test_default_config_reproduces_the_v10_fingerprint():
+    """Recorded from the unmodified v1.0 code (CPU, float64, 6 steps, seed 0).
+
+    The hashes depend on the installed torch/numpy build; after an intentional
+    dependency upgrade, re-record the file from the v1.0.0 tag, not from HEAD
+    (see scripts/record_default_fingerprint.py).
+    """
+    reference = json.loads(
+        (REPO / "tests" / "data" / "v10_default_fingerprint.json").read_text(encoding="utf-8")
+    )
+    keys = ("total", "data", "physics", "ic", "positivity", "balance")
+    for model, expected in reference.items():
+        if model.startswith("_"):
+            continue
+        trainer = _trainer(model=model, steps_quick=6, log_every=1, seed=0)
+        trainer.train()
+        digest = hashlib.sha256()
+        for name, p in sorted(trainer.model.state_dict().items()):
+            digest.update(name.encode())
+            digest.update(p.detach().cpu().numpy().tobytes())
+        assert [[r[k] for k in keys] for r in trainer.history] == expected["history"], model
+        assert digest.hexdigest() == expected["state_sha256"], model
+
+
+def test_total_derivative_training_steps_are_finite():
+    trainer = _trainer(total_derivative=True, ras_filter_window=4, steps_quick=4, log_every=1)
+    summary = trainer.train()
+    for record in trainer.history:
+        assert all(np.isfinite(record[k]) for k in ("total", "physics", "data"))
+    assert summary["total_derivative"] is True
+    assert summary["ras_filter_window"] == 4
+    assert summary["variant"] == ""

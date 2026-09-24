@@ -85,6 +85,14 @@ class RunConfig:
     # Restrict the initial-condition anchor to the directly sensed tank/component
     # entries instead of the full 5x14 state (revision ablation).
     ic_measured_only: bool = False
+    # v1.1: constrain the total derivative along the influent trajectory
+    # (False reproduces the v1.0 partial-derivative residual bit for bit).
+    total_derivative: bool = False
+    # v1.1: causal trailing average over this many RAS TSS samples before the
+    # curriculum smoothing; 1 disables it (v1.0 behaviour).
+    ras_filter_window: int = 1
+    # Free-form suffix appended to the run id by scripts/run_all.py variants.
+    variant: str = ""
     pinn: dict[str, Any] = field(default_factory=dict)
     lstm: dict[str, Any] = field(default_factory=dict)
 
@@ -227,7 +235,16 @@ class Trainer:
         else:
             source = source.window(0.0, min(stage.horizon_days, float(source.t[-1])))
 
-        obs = cl.smooth_observations(source.obs, stage.smoothing_window)
+        raw = source.obs
+        if self.cfg.ras_filter_window > 1:
+            # Causal filter on the raw noisy RAS signal first, so the PINN, the
+            # EKF and the baselines all see the same input; the window always
+            # starts at t = 0, so filtering after slicing changes nothing.
+            raw = raw.copy()
+            raw[:, self.ras_col] = cl.trailing_average(
+                raw[:, self.ras_col], self.cfg.ras_filter_window
+            )
+        obs = cl.smooth_observations(raw, stage.smoothing_window)
 
         def T(x, dtype=None):
             return torch.as_tensor(
@@ -266,11 +283,22 @@ class Trainer:
         def interp(x: torch.Tensor) -> torch.Tensor:
             return x[lo] * (1.0 - w) + x[hi] * w
 
+        # Slope of the same linear interpolant on the segment [lo, hi]; zero at
+        # the right end of the grid where hi == lo.
+        span = (t_grid[hi] - t_grid[lo]).unsqueeze(-1)
+        same = (hi == lo).unsqueeze(-1)
+        safe = torch.where(same, torch.ones_like(span), span)
+
+        def slope(x: torch.Tensor) -> torch.Tensor:
+            return torch.where(same, torch.zeros_like(x[lo]), (x[hi] - x[lo]) / safe)
+
         return {
             "t": t,
             "q_in": interp(batch["q_in"]),
             "z_in": interp(batch["z_in"]),
             "tss_ras": interp(batch["tss_ras"]),
+            "dq_dt": slope(batch["q_in"]),
+            "dz_dt": slope(batch["z_in"]),
         }
 
     # -- training ----------------------------------------------------------
@@ -295,9 +323,15 @@ class Trainer:
 
             if self.cfg.arch == "pinn" and weights.physics > 0.0:
                 colloc = self._collocation(stage, batch)
-                z_c, dz_c = self.model.state_and_derivative(
-                    colloc["t"], colloc["q_in"], colloc["z_in"]
-                )
+                if cfg.total_derivative:
+                    z_c, dz_c = self.model.state_and_derivative(
+                        colloc["t"], colloc["q_in"], colloc["z_in"],
+                        dq_dt=colloc["dq_dt"], dz_dt=colloc["dz_dt"],
+                    )
+                else:
+                    z_c, dz_c = self.model.state_and_derivative(
+                        colloc["t"], colloc["q_in"], colloc["z_in"]
+                    )
             else:
                 colloc, z_c, dz_c = None, None, None
 
@@ -380,6 +414,9 @@ class Trainer:
             "noise": self.cfg.noise,
             "seed": self.cfg.seed,
             "ic_measured_only": self.cfg.ic_measured_only,
+            "total_derivative": self.cfg.total_derivative,
+            "ras_filter_window": self.cfg.ras_filter_window,
+            "variant": self.cfg.variant,
             "profile": self.cfg.profile,
             "train_end_day": self.cfg.train_end_day,
             "holdout_days": list(self.cfg.holdout_days),

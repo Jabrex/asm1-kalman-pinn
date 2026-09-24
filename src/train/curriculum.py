@@ -278,3 +278,26 @@ def smooth_observations(obs: np.ndarray, window: int) -> np.ndarray:
         [np.convolve(padded[:, j], kernel, mode="valid")[: obs.shape[0]] for j in range(obs.shape[1])],
         axis=-1,
     )
+
+
+def trailing_average(x: np.ndarray, window: int) -> np.ndarray:
+    """Causal moving average along axis 0: ``out[i] = mean(x[max(0, i-w+1) : i+1])``.
+
+    Unlike :func:`smooth_observations` it never looks ahead, so an online
+    estimator (the EKF) and the PINN can share the same filtered signal without
+    either one seeing a future sample. The first ``w - 1`` outputs average the
+    samples available so far. ``window <= 1`` returns an unchanged copy.
+    """
+    arr = np.asarray(x, dtype=float)
+    w = int(window)
+    if w <= 1:
+        return arr.copy()
+    n = arr.shape[0]
+    csum = np.cumsum(arr, axis=0)
+    out = np.empty_like(csum)
+    head = min(w, n)
+    counts = np.arange(1, head + 1, dtype=float).reshape((-1,) + (1,) * (arr.ndim - 1))
+    out[:head] = csum[:head] / counts
+    if n > w:
+        out[w:] = (csum[w:] - csum[:-w]) / float(w)
+    return out
