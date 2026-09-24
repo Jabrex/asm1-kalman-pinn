@@ -572,7 +572,8 @@ def select_kinetics(data_dir: str, prior_path: str, sigma: float, out_dir: Path,
     for mode, x0_sens in (("steady_state", sens.steady_state_parameter_sensitivity(model, z_ss, u_ss, params)),
                           ("fixed", None)):
         ps = sens.parameter_sensitivity(model, x, case.inputs, case.t, params, h, r,
-                                        substeps=substeps, x0_sensitivity=x0_sens)
+                                        substeps=substeps, x0_sensitivity=x0_sens,
+                                        drift="trajectory")
         gram = ps["s_theta"].T @ ps["s_theta"]
         f_marg = sens.marginal_parameter_fisher(ps["s_theta"], ps["s_x0"], p0)
         sel = sens.d_optimal_subset(f_marg, k=k, max_ci=max_ci, names=KINETIC_CANDIDATES, ci_gram=gram)
