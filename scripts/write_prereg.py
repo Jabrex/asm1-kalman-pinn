@@ -123,7 +123,8 @@ def observer_table(files: dict[str, dict]) -> tuple[str, int]:
         f["cells"].add(cfg["cell"])
         f["runs"] += len(expected_run_dirs(cfg))
     lines = ["| Family | YAML files | Cells | Estimator runs |", "| --- | --- | --- | --- |"]
-    for fam in ("main", "realisations", "m0prime", "random", "sigma_log", "settler", "sensors"):
+    order = ("main", "realisations", "m0prime", "random", "sigma_log", "lab", "settler", "sensors")
+    for fam in [*order, *sorted(set(fams) - set(order))]:
         if fam in fams:
             f = fams[fam]
             lines.append("| %s | %d | %d | %d |" % (fam, f["files"], len(f["cells"]), f["runs"]))
