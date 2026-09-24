@@ -135,3 +135,73 @@ def test_true_underflow_solubles_reproduce_the_full_plant_reactor(model):
                                   recycle_solubles=sim["underflow"][:, model.plant.i_soluble])
     assert _track(reactor, tru) < 2e-3
     assert _track(reactor, tru, "track_a_measured") < 2e-3
+
+
+# --------------------------------------------------------------------------
+# Kalman filter: core
+# --------------------------------------------------------------------------
+import time  # noqa: E402
+
+from scipy.integrate import quad_vec  # noqa: E402
+from scipy.linalg import expm  # noqa: E402
+
+from src.observers.ekf import (EkfConfig, estimate_r_from_data, ras_log_variance,  # noqa: E402
+                               rts_smooth, run_ekf, van_loan)
+from src.train.curriculum import trailing_average  # noqa: E402
+
+
+def _window(ds, days):
+    cols, ras_col = _cols(ds)
+    sel = ds.t <= days + 1e-9
+    raw = ds.obs[sel, ras_col]
+    return (ds.t[sel], ds.obs[sel][:, cols], TARGET_CHANNELS, ds.q_in[sel], ds.z_in[sel],
+            trailing_average(raw, 4)), ras_log_variance(raw, 4)
+
+
+def test_van_loan_matches_quadrature():
+    rng = np.random.default_rng(0)
+    a = np.diag([-7900.0, -50.0, -0.05, 0.0]) + 0.1 * rng.normal(size=(4, 4))
+    qc, h = np.diag([1e-2, 1e-3, 1e-4, 1e-6]), 15.0 / 1440.0
+    ref = quad_vec(lambda s: expm(a * s) @ qc @ expm(a * s).T, 0.0, h, epsabs=1e-16, epsrel=1e-12)[0]
+    assert np.max(np.abs(van_loan(a, qc, h) - ref) / np.maximum(np.abs(ref), 1e-30)) < 1e-8
+
+
+def test_estimate_r_recovers_multiplicative_noise_and_respects_the_floor():
+    t = np.linspace(0.0, 12.0, 1153)
+    noisy = (5.0 + 2.0 * np.sin(2 * np.pi * t)) * (1.0 + 0.10 * np.random.default_rng(3).normal(size=t.size))
+    r = estimate_r_from_data(noisy[:, None], r_floor=0.01)
+    assert r[0] == pytest.approx(0.01, rel=0.15)
+    assert estimate_r_from_data(np.full((50, 1), 3.0))[0] == pytest.approx(1e-4, rel=1e-12)
+    assert ras_log_variance(noisy, 4) == pytest.approx(r[0] / 4.0, rel=1e-12)
+
+
+def test_ekf_with_negligible_noise_reproduces_the_open_loop(model, dry):
+    ds = dry["0p10"]
+    args, _ = _window(ds, 2.0)
+    res = run_ekf(model, *args, _initial_state(ds), np.full((5, 14), 1e-8),
+                  EkfConfig(q_soluble=1e-8, q_particulate=1e-8))
+    ol = model.integrate_expo(_initial_state(ds), args[0], args[3], args[4], args[5])
+    assert not res.diverged and _track(ol, res.z()) < 1e-3
+
+
+def test_covariances_stay_symmetric_positive_definite(model, dry):
+    ds = dry["0p10"]
+    args, rv = _window(ds, 1.0)
+    res = run_ekf(model, *args, _initial_state(ds), np.full((5, 14), 0.05), EkfConfig(),
+                  ras_log_var=rv)
+    assert not res.diverged
+    for P in (res.P_pred, res.P_filt, rts_smooth(res).P):
+        assert np.max(np.abs(P - np.transpose(P, (0, 2, 1)))) == 0.0
+        for k in range(0, P.shape[0], 8):
+            eig = np.linalg.eigvalsh(P[k])
+            assert eig.min() > -1e-12 * eig.max()
+
+
+def test_one_14_day_filter_and_smoother_pass_is_fast(model, dry):
+    ds = dry["0p10"]
+    args, rv = _window(ds, 14.0)
+    started = time.perf_counter()
+    res = run_ekf(model, *args, _initial_state(ds), np.full((5, 14), 0.01),
+                  EkfConfig(q_soluble=0.1, q_particulate=0.03), ras_log_var=rv)
+    rts_smooth(res)
+    assert time.perf_counter() - started <= 180.0
