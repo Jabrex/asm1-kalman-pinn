@@ -273,3 +273,52 @@ def test_tuned_filter_is_statistically_consistent():
         pytest.skip("run configs/observers/k000_ie_a0.yaml first")
     info = json.loads(path.read_text(encoding="utf-8"))
     assert 0.5 <= info["nis_mean"] / info["n_channels"] <= 2.0
+
+
+# --------------------------------------------------------------------------
+# anchors
+# --------------------------------------------------------------------------
+from src.asm1.vault_loader import vault  # noqa: E402
+from src.observers import anchors  # noqa: E402
+
+
+def test_lab_operators_read_the_intended_sums(probe):
+    z, v = probe[0], vault()
+    ops = anchors.lab_operators(v)
+    i = {name: v.index(name) for name in v.components}
+    read = lambda key: float(np.sum(ops[key] * z))  # noqa: E731
+    organic = ("S_I", "S_S", "X_I", "X_S", "X_B_H", "X_B_A", "X_P")
+    assert read("COD_tank1") == pytest.approx(sum(z[0, i[c]] for c in organic))
+    assert read("CODf_tank5") == pytest.approx(z[4, i["S_I"]] + z[4, i["S_S"]])
+    # The vault's N column gives X_I no nitrogen (unlike the BSM1 EQI formula).
+    tkn = (z[0, i["S_NH"]] + z[0, i["S_ND"]] + z[0, i["X_ND"]]
+           + v.p("iXB") * (z[0, i["X_B_H"]] + z[0, i["X_B_A"]]) + v.p("iXP") * z[0, i["X_P"]])
+    assert read("TKN_tank1") == pytest.approx(tkn)
+    assert read("TKNf_tank1") == pytest.approx(z[0, i["S_NH"]] + z[0, i["S_ND"]])
+    assert read("TSS_tank3") == pytest.approx(float(Bsm1Plant().tss(z[2])))
+    assert read("ALK_tank5") == pytest.approx(z[4, i["S_ALK"]])
+    assert len(ops) == 15
+
+
+def test_gaussian_log_update_matches_the_scalar_closed_form():
+    mean, rel, op = np.full((5, 14), 10.0), np.full((5, 14), 0.5), np.zeros((5, 14))
+    op[2, 3] = 1.0
+    post_mean, post_rel = anchors.gaussian_log_update(mean, rel, [op], [20.0], [0.1])
+    pv, rv = np.log1p(0.25), np.log1p(0.01)
+    assert post_mean[2, 3] == pytest.approx(10.0 * 2.0 ** (pv / (pv + rv)), rel=1e-12)
+    assert np.log1p(post_rel[2, 3] ** 2) == pytest.approx(pv * rv / (pv + rv), rel=1e-12)
+    other = np.ones((5, 14), dtype=bool)
+    other[2, 3] = False
+    np.testing.assert_allclose(post_mean[other], 10.0, rtol=1e-14)
+    np.testing.assert_allclose(post_rel[other], 0.5, rtol=1e-12)
+    np.testing.assert_array_equal(anchors.gaussian_log_update(mean, rel, [], [], [])[0], mean)
+
+
+def test_ensemble_log_std_and_ic_weights():
+    members = np.exp(np.random.default_rng(5).normal(np.log(50.0), 0.3, size=(4000, 5, 14)))
+    assert np.all(np.abs(np.sqrt(np.log1p(anchors.ensemble_log_std(members) ** 2)) - 0.3) < 0.02)
+    assert np.array_equal(anchors.ic_weights_from_rel_std(np.full((5, 14), 0.01)), np.ones((5, 14)))
+    rel = np.full((5, 14), 0.1)
+    rel[0, 0] = 1.0
+    w = anchors.ic_weights_from_rel_std(rel)
+    assert w.mean() == pytest.approx(1.0, rel=1e-12) and w[0, 0] < w[1, 1]
