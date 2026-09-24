@@ -70,3 +70,35 @@ def test_default_config_reproduces_v10_losses_bit_for_bit():
     assert ref["label"] == "v1.0.0"
     got = short_run_losses(RAW)
     assert got == ref["cases"], _first_difference(got, ref["cases"])
+
+
+# ----------------------------------------------------------------------------
+# Task 5.2 - losses.py additions
+# ----------------------------------------------------------------------------
+def test_kinetic_parameter_names_are_the_fifteen_rate_parameters():
+    from src.asm1.vault_loader import vault
+    from src.models.losses import kinetic_parameter_names
+
+    assert kinetic_parameter_names(vault()) == (
+        "kh", "KX", "etah", "muH", "etag", "Ks", "bH", "KO_H", "KNO", "KNH_H",
+        "muA", "bA", "ka", "KO_A", "KNH",
+    )
+
+
+def test_total_forwards_kinetic_overrides_to_the_physics_term(tmp_path):
+    trainer = _trainer(tmp_path)
+    stage = trainer.schedule.stages[-1]
+    batch = trainer._stage_tensors(stage)
+    colloc = trainer._collocation(stage, batch)
+    z_c, dz_c = trainer.model.state_and_derivative(colloc["t"], colloc["q_in"], colloc["z_in"])
+    kw = dict(
+        weights=stage.weights_end, t=colloc["t"].detach(), z=z_c, dz_dt=dz_c,
+        q_in=colloc["q_in"], z_in=colloc["z_in"], tss_ras=colloc["tss_ras"],
+        targets=trainer.operator(z_c).detach(), z0_pred=z_c[:1], z0_true=z_c[:1].detach(),
+    )
+    mu_a = trainer.vault.parameters["muA"]
+    base = trainer.loss.total(**kw).physics
+    same = trainer.loss.total(**kw, params={"muA": mu_a}).physics
+    doubled = trainer.loss.total(**kw, params={"muA": 2.0 * mu_a}).physics
+    assert torch.equal(base, same)
+    assert not torch.equal(base, doubled)

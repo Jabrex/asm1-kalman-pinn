@@ -45,8 +45,9 @@ truth is touched.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -54,7 +55,23 @@ from torch import nn
 
 from ..asm1.model import Asm1Kinetics
 from ..asm1.plant import Bsm1Plant
+from ..asm1.vault_loader import Asm1Vault
 from ..data.sensors import SensorChannel
+
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def kinetic_parameter_names(source: Asm1Vault) -> tuple[str, ...]:
+    """Vault parameters that appear in at least one rate expression, in vault order.
+
+    Only these can be learned through ``physics_residual(params=...)``: the
+    stoichiometric parameters (YH, YA, fP, iXB, iXP) are baked into the numeric
+    ``nu`` matrix, so an override of them would change nothing.
+    """
+    used: set[str] = set()
+    for expression in source.rate_expressions:
+        used.update(_IDENTIFIER.findall(expression))
+    return tuple(name for name in source.parameters if name in used)
 
 
 @dataclass
@@ -364,6 +381,7 @@ class Asm1Loss:
         targets: torch.Tensor,
         z0_pred: torch.Tensor,
         z0_true: torch.Tensor,
+        params: Mapping[str, Any] | None = None,
     ) -> LossParts:
         zero = torch.zeros((), device=self.device, dtype=self.dtype)
 
@@ -375,7 +393,7 @@ class Asm1Loss:
         if dz_dt is None:
             l_phys = zero
         else:
-            residual = self.physics_residual(z, dz_dt, q_in, z_in, tss_ras)
+            residual = self.physics_residual(z, dz_dt, q_in, z_in, tss_ras, params=params)
             l_phys = torch.mean(residual ** 2)
 
         total = (
