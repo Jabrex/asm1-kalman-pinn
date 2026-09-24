@@ -86,12 +86,21 @@ class ObservationOperator:
         self.plant = plant
         self.channels = tuple(channels)
         self.names = tuple(c.name for c in self.channels)
-        self._spec: list[tuple[str, int, int | None]] = []
+        # (kind, tank, component index or None, linear weights or None)
+        self._spec: list[tuple[str, int, int | tuple[int, ...] | None, tuple[float, ...] | None]] = []
         for c in self.channels:
             if c.kind == "state":
-                self._spec.append(("state", int(c.tank), plant.vault.index(str(c.component))))
+                self._spec.append(
+                    ("state", int(c.tank), plant.vault.index(str(c.component)), None)
+                )
             elif c.kind == "tss_reactor":
-                self._spec.append(("tss", int(c.tank), None))
+                self._spec.append(("tss", int(c.tank), None, None))
+            elif c.kind == "linear":
+                if not c.weights:
+                    raise ValueError("Linear channel %r has no weights" % (c.name,))
+                idx = tuple(plant.vault.index(name) for name, _ in c.weights)
+                w = tuple(float(x) for _, x in c.weights)
+                self._spec.append(("linear", int(c.tank), idx, w))
             else:
                 raise ValueError(
                     "Channel %r has kind %r, which is a measured input rather than "
@@ -104,9 +113,13 @@ class ObservationOperator:
         i_tss = torch.as_tensor(self.plant.i_tss, device=z.device, dtype=torch.long)
         factor = self.plant.cfg.tss_factor
         cols = []
-        for kind, tank, comp in self._spec:
+        for kind, tank, comp, weights in self._spec:
             if kind == "state":
                 cols.append(z[:, tank, comp])
+            elif kind == "linear":
+                idx = torch.as_tensor(comp, device=z.device, dtype=torch.long)
+                w = torch.as_tensor(weights, device=z.device, dtype=z.dtype)
+                cols.append(z[:, tank].index_select(-1, idx) @ w)
             else:
                 cols.append(factor * z[:, tank].index_select(-1, i_tss).sum(-1))
         return torch.stack(cols, dim=-1)

@@ -46,12 +46,20 @@ NOISE_LEVELS: tuple[float, ...] = (0.0, 0.05, 0.10, 0.15)
 
 @dataclass(frozen=True)
 class SensorChannel:
-    """One measured signal."""
+    """One measured signal.
+
+    ``kind == "linear"`` measures ``sum(w * Z[tank, component])`` over
+    ``weights``; it models lumped probes such as UV-Vis soluble COD.
+    ``sigma_override`` replaces the dataset noise level for this channel when
+    that level is non-zero (a noise-free dataset stays noise-free).
+    """
 
     name: str
-    kind: str                 # "state" | "tss_reactor" | "tss_underflow"
+    kind: str                 # "state" | "tss_reactor" | "tss_underflow" | "linear"
     tank: int | None = None   # 0-based reactor index
     component: str | None = None
+    weights: tuple[tuple[str, float], ...] | None = None
+    sigma_override: float | None = None
 
     @property
     def label(self) -> str:
@@ -71,6 +79,31 @@ SENSOR_SET: tuple[SensorChannel, ...] = (
 )
 
 
+#: Candidate channels for the sensor-value analysis (v1.1). Never part of
+#: SENSOR_SET, so Track B and every v1.0 consumer are unchanged. They are
+#: written as extra columns after the eight standard ones, with their own
+#: noise stream. SCOD is a UV-Vis soluble COD probe (S_I + S_S); its 0.20
+#: relative error reflects calibration drift rather than electronic noise.
+CANDIDATE_CHANNELS: tuple[SensorChannel, ...] = (
+    SensorChannel("S_NH_tank1", "state", tank=0, component="S_NH"),
+    SensorChannel("S_NH_tank2", "state", tank=1, component="S_NH"),
+    SensorChannel("S_NH_tank3", "state", tank=2, component="S_NH"),
+    SensorChannel("S_NH_tank4", "state", tank=3, component="S_NH"),
+    SensorChannel("S_NO_tank1", "state", tank=0, component="S_NO"),
+    SensorChannel("S_NO_tank3", "state", tank=2, component="S_NO"),
+    SensorChannel("S_NO_tank4", "state", tank=3, component="S_NO"),
+    SensorChannel("TSS_tank1", "tss_reactor", tank=0),
+    SensorChannel(
+        "SCOD_tank1", "linear", tank=0,
+        weights=(("S_I", 1.0), ("S_S", 1.0)), sigma_override=0.20,
+    ),
+    SensorChannel(
+        "SCOD_tank5", "linear", tank=4,
+        weights=(("S_I", 1.0), ("S_S", 1.0)), sigma_override=0.20,
+    ),
+)
+
+
 def observed_components() -> tuple[str, ...]:
     """Components that appear in at least one direct state measurement."""
     return tuple(sorted({c.component for c in SENSOR_SET if c.component}))
@@ -87,8 +120,8 @@ class ObservationDataset:
     """Everything a model is allowed to see, plus the hidden ground truth."""
 
     t: np.ndarray             # (n,) days
-    obs_clean: np.ndarray     # (n, 8) noise-free sensor values
-    obs: np.ndarray           # (n, 8) noisy sensor values fed to the models
+    obs_clean: np.ndarray     # (n, 8 + k) noise-free sensor values, k candidate channels
+    obs: np.ndarray           # (n, 8 + k) noisy sensor values; select columns by channel name
     q_in: np.ndarray          # (n,) known
     z_in: np.ndarray          # (n, 14) known
     truth_reactor: np.ndarray  # (n, 5, 14) ground truth - EVALUATION ONLY
@@ -172,9 +205,20 @@ class SensorModel:
 
     def observe(self, result: SimulationResult) -> np.ndarray:
         """Noise-free sensor readings, shape ``(n, n_channels)``."""
+        return self._observe_channels(result, self.channels)
+
+    def _observe_channels(
+        self, result: SimulationResult, channels: Sequence[SensorChannel]
+    ) -> np.ndarray:
         columns = []
-        for channel in self.channels:
-            if channel.kind == "state":
+        for channel in channels:
+            if channel.kind == "linear":
+                if not channel.weights:
+                    raise ValueError("Linear channel %r has no weights" % (channel.name,))
+                idx = [self.vault.index(name) for name, _ in channel.weights]
+                w = np.array([float(x) for _, x in channel.weights])
+                columns.append(result.reactor[:, int(channel.tank)][:, idx] @ w)
+            elif channel.kind == "state":
                 i = self.vault.index(str(channel.component))
                 columns.append(result.reactor[:, int(channel.tank), i])
             elif channel.kind == "tss_reactor":
@@ -196,12 +240,70 @@ class SensorModel:
         clipped = noisy < 0.0
         return np.maximum(noisy, 0.0), float(np.mean(clipped))
 
+    @staticmethod
+    def add_noise_per_channel(
+        clean: np.ndarray, sigmas: np.ndarray, rng: np.random.Generator
+    ) -> tuple[np.ndarray, float]:
+        """Same noise model as :meth:`add_noise`, one sigma per column."""
+        sigmas = np.asarray(sigmas, dtype=float)
+        if clean.shape[1] != sigmas.shape[0]:
+            raise ValueError("one sigma per column is required")
+        if not np.any(sigmas > 0.0):
+            return clean.copy(), 0.0
+        eps = rng.normal(loc=0.0, scale=1.0, size=clean.shape) * sigmas[None, :]
+        noisy = clean * (1.0 + eps)
+        clipped = noisy < 0.0
+        return np.maximum(noisy, 0.0), float(np.mean(clipped))
+
+    @staticmethod
+    def channel_sigma(channel: SensorChannel, sigma: float) -> float:
+        """Noise level of one channel in a dataset built at ``sigma``."""
+        if sigma == 0.0:
+            return 0.0
+        if channel.sigma_override is not None:
+            return float(channel.sigma_override)
+        return float(sigma)
+
     def build(
-        self, result: SimulationResult, sigma: float, seed: int = 0
+        self,
+        result: SimulationResult,
+        sigma: float,
+        seed: int = 0,
+        extra_channels: Sequence[SensorChannel] = (),
     ) -> ObservationDataset:
+        """Noisy dataset. Standard columns are drawn exactly as in v1.0.
+
+        The standard channels use ``default_rng(seed)`` with shape ``(n, 8)``,
+        so adding ``extra_channels`` never changes them. Extra channels use the
+        independent stream ``default_rng([seed, 1])`` and are appended after
+        the standard columns.
+        """
         clean = self.observe(result)
         rng = np.random.default_rng(seed)
         noisy, clip_fraction = self.add_noise(clean, sigma, rng)
+        names = self.names
+        channel_meta = [asdict(c) for c in self.channels]
+        extra_meta: dict[str, Any] = {}
+        extras = tuple(extra_channels)
+        if extras:
+            clash = sorted(set(c.name for c in extras) & set(names))
+            if clash:
+                raise ValueError("Extra channels duplicate standard channels: %s" % clash)
+            extra_clean = self._observe_channels(result, extras)
+            sigmas = np.array([self.channel_sigma(c, sigma) for c in extras])
+            extra_noisy, extra_clip = self.add_noise_per_channel(
+                extra_clean, sigmas, np.random.default_rng([int(seed), 1])
+            )
+            clean = np.concatenate([clean, extra_clean], axis=1)
+            noisy = np.concatenate([noisy, extra_noisy], axis=1)
+            names = names + tuple(c.name for c in extras)
+            channel_meta += [asdict(c) for c in extras]
+            extra_meta = {
+                "extra_channels": [c.name for c in extras],
+                "extra_sigmas": sigmas.tolist(),
+                "extra_clip_fraction": extra_clip,
+                "extra_noise_seed": [int(seed), 1],
+            }
         return ObservationDataset(
             t=result.t,
             obs_clean=clean,
@@ -210,7 +312,7 @@ class SensorModel:
             z_in=result.influent,
             truth_reactor=result.reactor,
             truth_y=result.y,
-            channels=self.names,
+            channels=names,
             sigma=float(sigma),
             seed=int(seed),
             clip_fraction=clip_fraction,
@@ -218,7 +320,8 @@ class SensorModel:
                 **result.meta,
                 "observed_components": list(observed_components()),
                 "unobserved_components": list(unobserved_components()),
-                "channels": [asdict(c) for c in self.channels],
+                "channels": channel_meta,
                 "noise_model": "multiplicative gaussian, z*(1+eps), eps~N(0,sigma^2), clipped at 0",
+                **extra_meta,
             },
         )
