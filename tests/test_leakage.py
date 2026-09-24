@@ -39,7 +39,9 @@ REPO = Path(__file__).resolve().parents[1]
 
 #: Directories whose modules run inside the training loop. Globbed, not listed,
 #: so a newly added module is covered automatically instead of silently skipped.
-TRAINING_ROOTS = ("src/train", "src/models")
+TRAINING_ROOTS = ("src/train", "src/models", "src/observers")
+#: Observers get their initial state from anchor files only: even ``[0]`` is forbidden.
+OBSERVER_ROOT = "src/observers"
 
 #: Modules that may read ground truth freely: they build the datasets or score
 #: predictions after training. Kept deliberately minimal - a file that needs to
@@ -163,6 +165,18 @@ def test_every_module_touching_truth_is_classified():
         "(where only [0] is allowed) nor EVALUATION_ALLOWLIST. Classify them "
         "deliberately:\n  " + "\n  ".join(unclassified)
     )
+
+
+def test_observers_never_name_ground_truth_at_all():
+    """Anchors carry the initial state; the observer package reads no truth, not even [0]."""
+    modules = _modules(OBSERVER_ROOT)
+    assert any(p.name == "anchors.py" for p in modules), "src/observers/anchors.py is missing"
+    offenders = [
+        "%s:%d  %s" % (_rel(path), line, name)
+        for path in modules
+        for line, name, _ in _name_hits(path, TRUTH_NAMES | CLEAN_OBSERVATION_NAMES)
+    ]
+    assert not offenders, "Observer code names ground truth:\n  " + "\n  ".join(offenders)
 
 
 def test_evaluation_allowlist_has_no_dead_entries():
@@ -293,3 +307,33 @@ def test_loss_and_gradients_stay_finite_when_hidden_truth_is_poisoned(model):
             "stage %s: gradients became non-finite with poisoned ground truth: %s"
             % (stage.name, bad[:5])
         )
+
+
+@pytest.mark.parametrize("poison_t0", [False, True], ids=["after_t0", "including_t0"])
+def test_observers_stay_finite_when_hidden_truth_is_poisoned(poison_t0):
+    """EKF and EKS on poisoned datasets: outputs must stay finite.
+
+    ``after_t0`` keeps truth[0] (the A0 anchor is copied from it before the
+    poisoning); ``including_t0`` poisons every sample, as when the anchor comes
+    from a file. A short window keeps the test fast.
+    """
+    pytest.importorskip("torch")
+    data_dir = _require_datasets()
+    from src.data.sensors import ObservationDataset
+    from src.observers.pipeline import ObserverSpec, run_estimators
+
+    dry = ObservationDataset.load(data_dir / ("obs_dry_sigma%s.npz" % SIGMA_TAG)).window(0.0, 1.0)
+    anchor = {"z0_mean": dry.truth_reactor[0].copy(), "z0_rel_std": np.full((5, 14), 0.05)}
+    _poison(dry)
+    if poison_t0:
+        dry.truth_reactor[0] = np.nan
+        dry.truth_y[0] = np.nan
+    spec = ObserverSpec(
+        estimators=("ekf", "eks"), q_mode="fixed", q_fixed=(0.03, 0.01),
+        train_end_day=0.5, holdout_days=(0.5, 1.0), rain=False,
+    )
+    out = run_estimators(dry, None, anchor, spec)
+    for name in ("ekf", "eks"):
+        assert not out[name]["info"]["diverged"]
+        for key, arr in out[name]["predictions"].items():
+            assert np.isfinite(arr).all(), "%s/%s became non-finite" % (name, key)

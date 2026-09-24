@@ -322,3 +322,18 @@ def test_ensemble_log_std_and_ic_weights():
     rel[0, 0] = 1.0
     w = anchors.ic_weights_from_rel_std(rel)
     assert w.mean() == pytest.approx(1.0, rel=1e-12) and w[0, 0] < w[1, 1]
+
+
+# --------------------------------------------------------------------------
+# pipeline
+# --------------------------------------------------------------------------
+from src.observers.pipeline import resolve_channels  # noqa: E402
+
+
+def test_resolve_channels_rejects_the_ras_input():
+    assert resolve_channels(None) == tuple(TARGET_CHANNELS)
+    assert [c.name for c in resolve_channels(("S_O_tank3", "TSS_tank5"))] == ["S_O_tank3", "TSS_tank5"]
+    with pytest.raises(ValueError):
+        resolve_channels(("TSS_ras",))
+    with pytest.raises(KeyError):
+        resolve_channels(("S_O_tank9",))
