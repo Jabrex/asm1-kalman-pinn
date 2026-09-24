@@ -1,0 +1,17 @@
+K0-Ie-A0 s0  copy     train 0.0553 holdout 0.0841  (47 s)
+K0-Ie-A0 s0  layers6  train 0.0008 holdout 0.0021  (59 s)
+K0-Ie-A0 s0  lump1    train 0.0129 holdout 0.0212  (53 s)
+K0-Ie-A0 s0  layers6  drop vs copy: train 99 % holdout 98 %
+K0-Ie-A0 s0  lump1    drop vs copy: train 77 % holdout 75 %
+K0-Ie-A0 s10 copy     train 0.0823 holdout 0.1412  (50 s)
+K0-Ie-A0 s10 layers6  train 0.0361 holdout 0.0712  (66 s)
+K0-Ie-A0 s10 lump1    train 0.0442 holdout 0.0851  (60 s)
+K0-Ie-A0 s10 layers6  drop vs copy: train 56 % holdout 50 %
+K0-Ie-A0 s10 lump1    drop vs copy: train 46 % holdout 40 %
+K1-Ic-As s10 copy     train 0.6743 holdout 1.0017  (49 s)
+K1-Ic-As s10 layers6  train 0.6654 holdout 0.9890  (64 s)
+K1-Ic-As s10 lump1    train 0.6664 holdout 0.9908  (57 s)
+K1-Ic-As s10 layers6  drop vs copy: train 1 % holdout 1 %
+K1-Ic-As s10 lump1    drop vs copy: train 1 % holdout 1 %
+
+[exited with code 0]
