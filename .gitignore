@@ -44,3 +44,10 @@ Thumbs.db
 
 # v1.1 smoke and probe runs (underscore prefix; collect_runs skips them too)
 results/v11/_*/
+
+# v1.1 truth-plant datasets (G2). Regenerated bit for bit by scripts/generate_data.py
+# (the exact argv is in each manifest.json) with OPENBLAS_NUM_THREADS=4; SHA-256 of
+# every file in results/v11/data_checksums.json. The manifests stay tracked.
+results/raw_k*/*.npz
+results/raw_rand/*/*.npz
+results/raw/obs_dry_sigma0p10_r*.npz
