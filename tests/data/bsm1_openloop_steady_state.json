@@ -3,9 +3,9 @@
   "source": "Alex, J., Benedetti, L., Copp, J., Gernaey, K.V., Jeppsson, U., Nopens, I., Pons, M.-N., Rieger, L., Rosen, C., Steyer, J.P., Vanrolleghem, P., Winkler, S. (2008). Benchmark Simulation Model no. 1 (BSM1). Report LTH-IEA-7229, CODEN:LUTEDX/(TEIE-7229)/1-62/(2008), Dept. of Industrial Electrical Engineering and Automation, Lund University. Prepared by the IWA Taskgroup on Benchmarking of Control Strategies for WWTPs, April 2008. https://www2.iea.lth.se/publications/Reports/LTH-IEA-7229.pdf",
   "table": "Appendix 4: 'Steady state results for openloop' (Results from Matlab/Simulink implementation by Dr Ulf Jeppsson, IEA, Lund University, Sweden, March 27 2008), blocks Reactor 1 to Reactor 5. Section 4 (page 14) refers to these values as Tables 6 to 8 of the website file Steady.txt; the printed source is Appendix 4.",
   "page": "39-41",
-  "transcribed_by": "Claude (Anthropic), machine transcription from the official report PDF (https://www2.iea.lth.se/publications/Reports/LTH-IEA-7229.pdf, SHA-256 30828bc11496fb6d9801c1b53c4c62cb27b2274f831938fee4087c14b00e901a), source located via Consensus, 2026-09-24; author confirmation pending",
+  "transcribed_by": "Claude (Anthropic), machine transcription from the official report PDF (https://www2.iea.lth.se/publications/Reports/LTH-IEA-7229.pdf, SHA-256 30828bc11496fb6d9801c1b53c4c62cb27b2274f831938fee4087c14b00e901a), source located via Consensus, 2026-09-24; independently re-checked, see checked_by",
   "transcribed_on": "2026-09-24",
-  "checked_by": null,
+  "checked_by": "Claude (Anthropic), independent programmatic re-check on 2026-09-24 (task delegated by the authors): PyMuPDF text extraction of the same PDF, Appendix 4 pp. 39-41, Reactor 1-5 blocks parsed and compared cell by cell with this file, 65/65 identical",
   "units": "g/m3 (COD or N as appropriate); S_ALK in mol HCO3-/m3",
   "components": [
     "S_I",
@@ -124,7 +124,7 @@
   "parameter_check": {
     "table": "Table 2: Stoichiometric parameters; Table 3: Kinetic parameters (section 2.2.4, values correspond approximately to 15 C)",
     "page": "7",
-    "checked_by": "Claude (Anthropic), machine transcription from the official report PDF (https://www2.iea.lth.se/publications/Reports/LTH-IEA-7229.pdf, SHA-256 30828bc11496fb6d9801c1b53c4c62cb27b2274f831938fee4087c14b00e901a), source located via Consensus, 2026-09-24; author confirmation pending",
+    "checked_by": "Claude (Anthropic), machine transcription from the official report PDF (https://www2.iea.lth.se/publications/Reports/LTH-IEA-7229.pdf, SHA-256 30828bc11496fb6d9801c1b53c4c62cb27b2274f831938fee4087c14b00e901a), source located via Consensus, 2026-09-24; independently re-checked, see checked_by",
     "values": {
       "YA": 0.24,
       "YH": 0.67,
