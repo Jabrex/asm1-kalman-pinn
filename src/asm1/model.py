@@ -21,7 +21,7 @@ The same class serves NumPy (ground-truth ODE) and PyTorch (PINN physics loss).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 import numpy as np
 
@@ -54,6 +54,8 @@ class Asm1Kinetics:
             for i, expr in enumerate(self.vault.rate_expressions)
         )
         self._torch_nu: dict[tuple[Any, Any], Any] = {}
+        read = set().union(*(code.co_names for code in self._codes))
+        self.rate_parameters: tuple[str, ...] = tuple(n for n in self._params if n in read)
 
     # -- internals ---------------------------------------------------------
     def _clamped(self, Z: Any) -> Any:
@@ -63,10 +65,17 @@ class Asm1Kinetics:
             return torch.clamp(Z, min=self.floor)
         return np.maximum(Z, self.floor)
 
-    def _namespace(self, Z: Any) -> dict[str, Any]:
-        """Map component code ids and parameter code ids onto the last axis of Z."""
+    def _namespace(self, Z: Any, overrides: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Map component and parameter code ids onto Z; ``overrides`` replaces kinetic
+        constants for this call only (floats or torch scalars, graph kept)."""
         safe = self._clamped(Z)
         ns: dict[str, Any] = dict(self._params)
+        if overrides:
+            unknown = sorted(set(overrides) - set(self.rate_parameters))
+            if unknown:
+                raise KeyError("Not rate-expression parameters, cannot be overridden: %s "
+                               "(allowed: %s)" % (unknown, list(self.rate_parameters)))
+            ns.update(overrides)
         for i, name in enumerate(self.components):
             ns[name] = safe[..., i]
         return ns
@@ -84,9 +93,9 @@ class Asm1Kinetics:
         return cached
 
     # -- public API --------------------------------------------------------
-    def rates(self, Z: Any) -> Any:
+    def rates(self, Z: Any, overrides: Mapping[str, Any] | None = None) -> Any:
         """Process rates rho for state ``Z`` of shape ``(..., 14)`` -> ``(..., 8)``."""
-        ns = self._namespace(Z)
+        ns = self._namespace(Z, overrides)
         env = {"__builtins__": {}}
         values = [eval(code, env, ns) for code in self._codes]  # noqa: S307 - vault-sourced
         if _is_torch(Z):
@@ -95,9 +104,9 @@ class Asm1Kinetics:
             return torch.stack(values, dim=-1)
         return np.stack(np.broadcast_arrays(*values), axis=-1)
 
-    def conversion(self, Z: Any) -> Any:
+    def conversion(self, Z: Any, overrides: Mapping[str, Any] | None = None) -> Any:
         """Conversion rates r = nu^T rho for state ``Z``; ``(..., 14)`` -> ``(..., 14)``."""
-        rho = self.rates(Z)
+        rho = self.rates(Z, overrides)
         nu = self._nu_for(Z)
         if _is_torch(Z):
             import torch

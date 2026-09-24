@@ -73,3 +73,37 @@ def test_anoxic_growth_is_inhibited_by_oxygen(kinetics, v, sample_state):
     low[v.index("S_O")] = 0.1 * v.p("KO_H")
     high[v.index("S_O")] = 10.0 * v.p("KO_H")
     assert kinetics.rates(low)[1] > kinetics.rates(high)[1]
+
+
+# --- kinetic overrides (v1.1) -------------------------------------------------
+def test_rate_parameters_are_the_fifteen_kinetic_constants(kinetics):
+    assert kinetics.rate_parameters == ("kh", "KX", "etah", "muH", "etag", "Ks", "bH", "KO_H",
+                                        "KNO", "KNH_H", "muA", "bA", "ka", "KO_A", "KNH")
+
+
+def test_overrides_none_empty_or_vault_values_reproduce_the_default(kinetics, v, sample_state):
+    batch = np.stack([sample_state, sample_state * 0.7])
+    base = kinetics.conversion(batch)
+    same = {name: v.p(name) for name in kinetics.rate_parameters}
+    for overrides in (None, {}, same):
+        np.testing.assert_array_equal(kinetics.conversion(batch, overrides=overrides), base)
+
+
+def test_override_changes_only_the_rates_that_read_it(kinetics, v, sample_state):
+    rho = kinetics.rates(sample_state)
+    fast = kinetics.rates(sample_state, overrides={"muA": 2.0 * v.p("muA")})
+    np.testing.assert_allclose(fast[2], 2.0 * rho[2], rtol=1e-15)
+    np.testing.assert_array_equal(fast[np.arange(8) != 2], rho[np.arange(8) != 2])
+    assert v.p("muA") == 0.8, "the vault itself must be untouched"
+    with pytest.raises(KeyError, match="YH"):
+        kinetics.rates(sample_state, overrides={"YH": 0.6})
+
+
+def test_gradient_reaches_a_torch_scalar_override(kinetics, v, sample_state):
+    torch = pytest.importorskip("torch")
+    z = torch.as_tensor(np.stack([sample_state, sample_state * 1.3]), dtype=torch.float64)
+    mu = torch.tensor(v.p("muH"), dtype=torch.float64, requires_grad=True)
+    r = kinetics.conversion(z, overrides={"muH": mu})
+    assert torch.equal(r.detach(), kinetics.conversion(z))
+    r.sum().backward()
+    assert bool(torch.isfinite(mu.grad)) and float(mu.grad) != 0.0
