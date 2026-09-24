@@ -34,7 +34,10 @@ def test_budget_allows():
 
 
 def test_select_deduplicates_the_pair():
-    jobs = rc.select(["smoke-pair", "smoke"], "k100")
+    from scripts import v11_plan as vp
+
+    realistic = vp.realistic_k() if (vp.REPO / vp.GATE_D3).exists() else "k100"
+    jobs = rc.select(["smoke-pair", "smoke"], realistic)
     assert len(jobs) == 8 and round(sum(j.eq() for j in jobs), 6) == 1.8
 
 

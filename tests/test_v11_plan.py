@@ -28,6 +28,11 @@ def test_charging_rules():
     assert vp.nominal_eq("lstm", "full") == 0.35
 
 
+def _realistic() -> str:
+    """The realistic kinetics whose configs exist: gate D3's choice once it has run, else k100."""
+    return vp.realistic_k() if (vp.REPO / vp.GATE_D3).exists() else "k100"
+
+
 def test_arch_table_matches_model_specs():
     from src.train.run import MODEL_SPECS
 
@@ -36,7 +41,7 @@ def test_arch_table_matches_model_specs():
 
 
 def test_smoke_queue_is_nine_quick_runs():
-    jobs = vp.smoke_queue("k100")
+    jobs = vp.smoke_queue(_realistic())
     runs = [(j.out_dir, r) for j in jobs for r in j.expected_run_ids()]
     assert len(runs) == 9 and len(set(runs)) == 9
     assert round(sum(j.eq() for j in jobs), 6) == 1.8
@@ -45,14 +50,14 @@ def test_smoke_queue_is_nine_quick_runs():
 
 
 def test_core_queue_totals():
-    totals = _phase_totals(vp.core_queue("k100"))
+    totals = _phase_totals(vp.core_queue(_realistic()))
     assert totals == {"E4": 9.0, "E5": 6.0, "E6": 14.05, "E7": 4.0, "E3": 4.0}
     grand = round(sum(totals.values()) + 1.8 + vp.G1_SMOKE_EQ, 6)
     assert grand == 39.05 and round(grand - vp.G1_SMOKE_EQ, 6) == vp.G6_EQ
 
 
 def test_core_queue_run_dirs_are_unique_and_seeded():
-    dirs = [Path(j.out_dir, r).as_posix() for j in vp.core_queue("k100") for r, _ in j.expected_run_ids()]
+    dirs = [Path(j.out_dir, r).as_posix() for j in vp.core_queue(_realistic()) for r, _ in j.expected_run_ids()]
     assert len(dirs) == len(set(dirs))
     assert all(Path(d).parent.name.rsplit("_seed", 1)[1] in {"0", "1", "2"} for d in dirs)
 
@@ -75,5 +80,5 @@ def test_sigma_helpers_match_run_all():
 
 
 def test_run_all_list_agrees_with_plan():
-    for job in vp.smoke_queue("k100") + vp.core_queue("k100"):
+    for job in vp.smoke_queue(_realistic()) + vp.core_queue(_realistic()):
         assert sorted(vp.planned_runs(job)) == sorted(job.expected_run_ids()), job
