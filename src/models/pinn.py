@@ -3,6 +3,9 @@
 The network is a coordinate model: it maps time (plus the known influent
 signals) to all 70 reactor states, and its time derivative is taken with
 autograd so the ASM1 residual can be evaluated at arbitrary collocation points.
+Since v1.1 the derivative can be taken along the influent trajectory (the total
+derivative), which is what the ASM1 balance constrains; v1.0 used the partial
+derivative in t with the influent inputs frozen.
 
 Output parameterisation
 -----------------------
@@ -38,9 +41,9 @@ class PinnConfig:
     activation: str = "tanh"
     features: FeatureConfig = FeatureConfig()
     scale_floor_fraction: float = 1e-3
-    #: "forward" uses one JVP for the scalar input t; "reverse" uses one VJP per
-    #: output. Both are exact. RUNBOOK step 5 checks the active mode against
-    #: central finite differences before any training run is trusted.
+    #: "forward" uses one JVP (in t, or along the influent trajectory when the
+    #: influent slopes are passed); "reverse" uses one VJP per output. Both are
+    #: exact. RUNBOOK step 6 checks them against finite differences.
     derivative_mode: str = "forward"
 
 
@@ -111,13 +114,45 @@ class Asm1Pinn(nn.Module):
         raw = self.net(x).view(-1, self.n_tanks, self.n_components)
         return self.scale * nn.functional.softplus(raw + _INV_SOFTPLUS_1)
 
+    def _along_trajectory(
+        self,
+        t: torch.Tensor,
+        q_in: torch.Tensor,
+        z_in: torch.Tensor,
+        dq_dt: torch.Tensor | None,
+        dz_dt: torch.Tensor | None,
+    ):
+        """``time -> Z(time, u(time))`` with the influent linear in time around ``t``.
+
+        ``u(time) = u(t) + du/dt * (time - t)``; at ``time == t`` the inputs are
+        exactly ``q_in`` and ``z_in``, so the state value is unchanged. Only the
+        derivative gains the influent path ``J_q dq/dt + J_z dz/dt``.
+        """
+        t0 = t.detach()
+        dq = torch.zeros_like(q_in) if dq_dt is None else dq_dt
+        dz = torch.zeros_like(z_in) if dz_dt is None else dz_dt
+
+        def f(time: torch.Tensor) -> torch.Tensor:
+            step = time - t0
+            return self(time, q_in + dq * step, z_in + dz * step)
+
+        return f
+
     def _derivative_reverse(
-        self, t: torch.Tensor, q_in: torch.Tensor, z_in: torch.Tensor
+        self,
+        t: torch.Tensor,
+        q_in: torch.Tensor,
+        z_in: torch.Tensor,
+        dq_dt: torch.Tensor | None = None,
+        dz_dt: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """One VJP per output. Exact, slow, and free of any functorch dependency."""
         if not t.requires_grad:
             raise ValueError("t must require grad for the physics residual")
-        z = self(t, q_in, z_in)
+        if dq_dt is None and dz_dt is None:
+            z = self(t, q_in, z_in)
+        else:
+            z = self._along_trajectory(t, q_in, z_in, dq_dt, dz_dt)(t)
         flat = z.reshape(z.shape[0], -1)
         grads = []
         for j in range(flat.shape[1]):
@@ -130,13 +165,21 @@ class Asm1Pinn(nn.Module):
         return z, torch.cat(grads, dim=-1).view_as(z)
 
     def _derivative_forward(
-        self, t: torch.Tensor, q_in: torch.Tensor, z_in: torch.Tensor
+        self,
+        t: torch.Tensor,
+        q_in: torch.Tensor,
+        z_in: torch.Tensor,
+        dq_dt: torch.Tensor | None = None,
+        dz_dt: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """One JVP for the scalar input t - about 70x cheaper than reverse mode."""
         from torch.func import jvp
 
-        def f(time: torch.Tensor) -> torch.Tensor:
-            return self(time, q_in, z_in)
+        if dq_dt is None and dz_dt is None:
+            def f(time: torch.Tensor) -> torch.Tensor:
+                return self(time, q_in, z_in)
+        else:
+            f = self._along_trajectory(t, q_in, z_in, dq_dt, dz_dt)
 
         return jvp(f, (t,), (torch.ones_like(t),))
 
@@ -146,11 +189,20 @@ class Asm1Pinn(nn.Module):
         q_in: torch.Tensor,
         z_in: torch.Tensor,
         mode: str | None = None,
+        dq_dt: torch.Tensor | None = None,
+        dz_dt: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return ``(Z, dZ/dt)`` at the collocation times ``t``."""
+        """Return ``(Z, dZ/dt)`` at the collocation times ``t``.
+
+        With ``dq_dt`` and ``dz_dt`` both ``None`` this is the v1.0 quantity: the
+        partial derivative in ``t`` with the influent inputs held fixed. Passing
+        the influent slopes (``(n, 1)`` and ``(n, 14)``) returns the total
+        derivative along the trajectory, ``dZ/dt = dZ/dt|_u + J_q q' + J_z z'``,
+        which is what the ASM1 balance actually constrains.
+        """
         mode = mode or self.cfg.derivative_mode
         if mode == "forward":
-            return self._derivative_forward(t, q_in, z_in)
+            return self._derivative_forward(t, q_in, z_in, dq_dt, dz_dt)
         if mode == "reverse":
-            return self._derivative_reverse(t, q_in, z_in)
+            return self._derivative_reverse(t, q_in, z_in, dq_dt, dz_dt)
         raise ValueError("derivative_mode must be 'forward' or 'reverse', got %r" % (mode,))
