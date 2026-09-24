@@ -26,7 +26,7 @@ import numpy as np
 from scipy.integrate import solve_ivp
 
 from ..asm1.plant import Bsm1Config, Bsm1Plant, InfluentFn, constant_influent
-from ..asm1.vault_loader import vault
+from ..asm1.vault_loader import Asm1Vault, vault
 from .influent import (
     BSM1_TABLE5_MEAN,
     InfluentGenerator,
@@ -186,6 +186,23 @@ def steady_state_residual(plant: Bsm1Plant, y: np.ndarray) -> float:
     return float(np.linalg.norm(dy) / max(np.linalg.norm(y), 1e-30))
 
 
+VAULT_TEMPERATURE_NOTE = (
+    "Vault 20 C parameter set only. BSM1 supplies geometry, flows and "
+    "influent composition; its 15 C kinetic parameters are NOT used, so "
+    "this steady state does not and should not match BSM1 Table 6."
+)
+OVERRIDE_TEMPERATURE_NOTE = (
+    "Truth plant with overridden kinetics; see truth_preset/alpha/parameters"
+)
+
+
+def _temperature_note(source: Asm1Vault) -> str:
+    """The v1.0 note for the vault set; a pointer to the override otherwise."""
+    if dict(source.parameters) == dict(vault().parameters):
+        return VAULT_TEMPERATURE_NOTE
+    return OVERRIDE_TEMPERATURE_NOTE
+
+
 def simulate(
     influent: InfluentGenerator,
     plant: Bsm1Plant | None = None,
@@ -193,8 +210,13 @@ def simulate(
     sample_interval: float = SAMPLE_INTERVAL_DAYS,
     solver: SolverSettings | None = None,
     scenario: str = "dry",
+    meta_extra: dict[str, Any] | None = None,
 ) -> SimulationResult:
-    """Run one dynamic scenario from a warmed-up steady state."""
+    """Run one dynamic scenario from a warmed-up steady state.
+
+    ``meta_extra`` is merged into ``meta`` last. The truth-plant generator uses
+    it for ``truth_preset``, ``alpha``, ``constant_from`` and ``offsteady_days``.
+    """
     if plant is None or y0 is None:
         plant, y0 = warm_up(plant, solver=solver)
 
@@ -219,12 +241,10 @@ def simulate(
         "duration_days": duration,
         "warmup_days": WARMUP_DAYS,
         "influent_summary": influent.summary(),
-        "temperature_note": (
-            "Vault 20 C parameter set only. BSM1 supplies geometry, flows and "
-            "influent composition; its 15 C kinetic parameters are NOT used, so "
-            "this steady state does not and should not match BSM1 Table 6."
-        ),
+        "temperature_note": _temperature_note(v),
     }
+    if meta_extra:
+        meta.update(meta_extra)
     return SimulationResult(t=t, y=y, meta=meta, **derived)
 
 
@@ -233,12 +253,16 @@ def generate(
     duration_days: float = 14.0,
     config: Bsm1Config | None = None,
     solver: SolverSettings | None = None,
+    source: Asm1Vault | None = None,
 ) -> SimulationResult:
-    """Build one labelled dataset: ``scenario`` is ``"dry"`` or ``"rain"``."""
+    """Build one labelled dataset: ``scenario`` is ``"dry"`` or ``"rain"``.
+
+    ``source`` selects the truth parameter set (None = the vault).
+    """
     builders = {"dry": dry_weather, "rain": rain_weather}
     if scenario not in builders:
         raise ValueError("Unknown scenario %r; expected one of %s" % (scenario, sorted(builders)))
-    plant = Bsm1Plant(config)
+    plant = Bsm1Plant(config, source)
     plant, y0 = warm_up(plant, solver=solver)
     return simulate(
         builders[scenario](duration_days),

@@ -147,3 +147,46 @@ def test_estimator_code_never_mentions_truth_plants():
             if "truth_plants" in path.read_text(encoding="utf-8"):
                 offenders.append(path.relative_to(REPO).as_posix())
     assert not offenders, "estimator modules mention truth_plants: %s" % offenders
+
+
+def test_simulate_records_meta_extra_and_the_override_note():
+    from src.data.influent import constant_scenario
+    from src.data.simulate import (
+        OVERRIDE_TEMPERATURE_NOTE,
+        VAULT_TEMPERATURE_NOTE,
+        default_seed,
+        simulate,
+    )
+
+    extra = {"truth_preset": "bsm1_15c", "alpha": 1.0, "constant_from": "nominal",
+             "offsteady_days": 0.0}
+    truth = Bsm1Plant(source=truth_vault("bsm1_15c"))
+    res = simulate(constant_scenario(1.0 / 24.0), plant=truth, y0=default_seed(truth),
+                   scenario="constant", meta_extra=extra)
+    for key, value in extra.items():
+        assert res.meta[key] == value
+    assert res.meta["temperature_note"] == OVERRIDE_TEMPERATURE_NOTE
+    assert res.meta["parameters"]["muH"] == 4.0
+
+    nominal = Bsm1Plant()
+    res0 = simulate(constant_scenario(1.0 / 24.0), plant=nominal, y0=default_seed(nominal),
+                    scenario="constant")
+    assert res0.meta["temperature_note"] == VAULT_TEMPERATURE_NOTE
+    assert "truth_preset" not in res0.meta
+
+
+def test_generate_passes_the_truth_source_to_the_plant(monkeypatch):
+    import src.data.simulate as sim
+
+    seen = {}
+
+    def fake_warm_up(plant, solver=None):
+        seen["vault"] = plant.vault
+        return plant, sim.default_seed(plant)
+
+    monkeypatch.setattr(sim, "warm_up", fake_warm_up)
+    monkeypatch.setattr(sim, "simulate", lambda influent, plant, y0, solver, scenario: plant)
+    tv = truth_vault("bsm1_15c")
+    assert sim.generate("dry", 1.0, source=tv).vault is tv
+    assert seen["vault"] is tv
+    assert sim.generate("dry", 1.0).vault is vault()
