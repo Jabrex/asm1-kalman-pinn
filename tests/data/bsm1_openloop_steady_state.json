@@ -1,0 +1,30 @@
+{
+  "description": "BSM1 open-loop steady state (constant stabilisation influent, KLa 240/240/84 1/d) transcribed by hand from the BSM1 technical report, for scripts/verify_bsm1_truth.py. Values are filled by an author, never by a script; null means not yet transcribed.",
+  "source": "Alex, J., Benedetti, L., Copp, J., Gernaey, K.V., Jeppsson, U., Nopens, I., Pons, M.-N., Rieger, L., Rosen, C., Steyer, J.P., Vanrolleghem, P., Winkler, S. (2008). Benchmark Simulation Model no. 1 (BSM1). Report LTH-IEA-7229, CODEN:LUTEDX/(TEIE-7229)/1-62/(2008), Dept. of Industrial Electrical Engineering and Automation, Lund University. Prepared by the IWA Taskgroup on Benchmarking of Control Strategies for WWTPs, April 2008. https://www2.iea.lth.se/publications/Reports/LTH-IEA-7229.pdf",
+  "table": null,
+  "page": null,
+  "transcribed_by": null,
+  "transcribed_on": null,
+  "checked_by": null,
+  "units": "g/m3 (COD or N as appropriate); S_ALK in mol HCO3-/m3",
+  "components": ["S_I", "S_S", "X_I", "X_S", "X_B_H", "X_B_A", "X_P", "S_O", "S_NO", "S_NH", "S_ND", "X_ND", "S_ALK"],
+  "tanks": {
+    "1": [null, null, null, null, null, null, null, null, null, null, null, null, null],
+    "2": [null, null, null, null, null, null, null, null, null, null, null, null, null],
+    "3": [null, null, null, null, null, null, null, null, null, null, null, null, null],
+    "4": [null, null, null, null, null, null, null, null, null, null, null, null, null],
+    "5": [null, null, null, null, null, null, null, null, null, null, null, null, null]
+  },
+  "report_only_cells": [],
+  "parameter_check": {
+    "table": null,
+    "page": null,
+    "checked_by": null,
+    "values": {
+      "YA": null, "YH": null, "fP": null, "iXB": null, "iXP": null,
+      "muH": null, "Ks": null, "KO_H": null, "KNO": null, "bH": null,
+      "etag": null, "etah": null, "kh": null, "KX": null,
+      "muA": null, "KNH": null, "bA": null, "KO_A": null, "ka": null
+    }
+  }
+}
