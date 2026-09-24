@@ -51,3 +51,14 @@ results/v11/_*/
 results/raw_k*/*.npz
 results/raw_rand/*/*.npz
 results/raw/obs_dry_sigma0p10_r*.npz
+
+# v1.1 bulk outputs. Observer and baseline predictions (about 1 GB in total)
+# go into the Zenodo v1.1 archive, not into git; their summary.json files are
+# tracked. Smoke and contract runs keep only their reports.
+results/v11/observers/**/predictions.npz
+results/v11/baselines/**/predictions.npz
+results/v11/_numerics/**/predictions.npz
+results/v11/_contract/
+results/v11/_smoke/*/
+results/v11/_smoke_g1/
+results/v11/run_core_inflight.json
