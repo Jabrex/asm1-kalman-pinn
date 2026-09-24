@@ -113,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     missing = steady_state_missing(ref) + parameter_check_problems(ref)
     if missing:
         out.write_text(json.dumps({
-            "status": "not_transcribed", "missing": missing, "tolerances": tolerances,
+            "status": "not_transcribed", "passed": False, "missing": missing, "tolerances": tolerances,
             "wording": None,
         }, indent=2), encoding="utf-8")
         print("NOT EVALUATED - %d open reference items (first: %s). Wrote %s"
@@ -127,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     passed = result["failures"] == 0
     payload = {
         "status": "pass" if passed else "fail",
+        "passed": passed,  # read by scripts/write_prereg.py (G6)
         "wording": PASS_WORDING if passed else FAIL_WORDING,
         "reference": {k: ref[k] for k in ("source", "table", "page", "transcribed_by",
                                           "transcribed_on", "checked_by")},
