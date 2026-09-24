@@ -1,0 +1,51 @@
+# v1.1 group G1 smoke run: one quick-profile CL-PINN run with the total-derivative
+# residual and the causal 1-hour RAS filter. Checks that the new training path is
+# finite and that the physics term falls. The underscore out_dir keeps it out of
+# collect_runs and out of git (.gitignore: results/v11/_*/). Budget: 0.2 PINN-run
+# equivalents (4000 of the full profile's 20000 steps).
+
+models: [cl_pinn]
+noise_levels: [0.10]
+seed: 0
+
+data_dir: results/raw
+out_dir: results/v11/_smoke_g1
+train_end_day: 12.0
+holdout_days: [12.0, 14.0]
+
+profile: quick
+steps_quick: 4000
+steps_full: 20000
+collocation_points: 512
+
+lr: 1.0e-3
+lr_final_fraction: 0.02
+grad_clip: 1.0
+log_every: 100
+
+device: cuda
+dtype: float32
+
+# v1.1 residual and RAS input
+total_derivative: true
+ras_filter_window: 4
+
+pinn:
+  hidden_width: 128
+  hidden_depth: 5
+  activation: tanh
+  derivative_mode: forward
+  features:
+    periods: [1.0, 7.0]
+    harmonics: [4, 2]
+    include_influent: true
+
+lstm:
+  hidden_size: 128
+  num_layers: 2
+  bidirectional: false
+  dropout: 0.0
+  features:
+    periods: [1.0, 7.0]
+    harmonics: [4, 2]
+    include_influent: true
