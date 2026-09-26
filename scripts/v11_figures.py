@@ -240,6 +240,9 @@ def fig2_recoverability(rec: dict[str, Any], states: dict[str, Any], validation:
         if err is None:
             continue
         entry = val.get((cell, estimator))
+        if val and entry is None:
+            raise ValueError("validation file has no %s entry for cell %s; Fig. 2c needs the registered index"
+                             % (estimator, cell))
         # The registered index is the cell's own (its anchor prior and influent view); the
         # validation file stores those points. Panel (a)'s file is used only without them.
         idx = np.asarray(entry["points_index"], dtype=float) if entry and entry.get("points_index") is not None \
@@ -299,7 +302,11 @@ def fig3_ladder(table: dict[str, Any], png: Path, cell: str, sigma: float) -> di
 # -- Fig. 4 -----------------------------------------------------------------------
 def fig4_mismatch(table: dict[str, Any], png: Path, sigma: float, influent: str = "ie", anchor: str = "a0",
                   recovery_cell: str = "k100_ie_a0") -> dict[str, Any]:
-    fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.6), sharey=True, layout="constrained")
+    fig = plt.figure(figsize=(7.2, 3.9), layout="constrained")
+    gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 1.0, 0.8])
+    ax_r0 = fig.add_subplot(gs[0, 0])
+    axes = [ax_r0, fig.add_subplot(gs[0, 1], sharey=ax_r0)]
+    ax_rec = fig.add_subplot(gs[0, 2])
     grid = [r for r in table["rows"] if r["k"] is not None and not r["extra"] and r["rand"] is None
             and not r["offsteady"] and r["influent"] == influent and r["anchor"] == anchor
             and abs(r["sigma"] - sigma) < 1e-9]
@@ -314,29 +321,44 @@ def fig4_mismatch(table: dict[str, Any], png: Path, sigma: float, influent: str 
                     ls="--" if estimator == "persistence" else "-", color=COLOURS.get(estimator), label=_label(estimator))
             plotted["series"].setdefault(window, {})[estimator] = pts
         for estimator in POINT_ESTIMATORS:
-            pts = sorted((r["kinetic_alpha"], r["median"], r["min"], r["max"]) for r in sub if r["estimator"] == estimator)
+            pts = sorted((r["kinetic_alpha"], r["median"], r["min"], r["max"], r["n"]) for r in sub
+                         if r["estimator"] == estimator)
             if not pts:
                 continue
             x = np.array([p[0] for p in pts]) + (0.012 if estimator == "cl_pinn_theta" else 0.0)
             med = np.array([p[1] for p in pts])
             ax.errorbar(x, med, yerr=[med - np.array([p[2] for p in pts]), np.array([p[3] for p in pts]) - med],
-                        fmt="s", ms=5, capsize=3, color=COLOURS.get(estimator), label=_label(estimator) + " (seeds)")
-            plotted["series"].setdefault(window, {})[estimator] = pts
-        for c in table["crossovers"]:
-            if (c["influent"], c["anchor"], c["window"], c["status"]) == (influent, anchor, window, "crosses") \
-                    and abs(c["sigma"] - sigma) < 1e-9 and c["estimator"] in ("ode_openloop_reduced", "eks"):
-                ax.axvline(c["alpha_star"], color=COLOURS.get(c["estimator"]), ls=":", lw=0.9)
-                ax.text(c["alpha_star"], ax.get_ylim()[1] * 0.97, " alpha* = %.2f" % c["alpha_star"], fontsize=6,
-                        va="top", color=COLOURS.get(c["estimator"]))
-                plotted["crossovers"].append(c)
+                        fmt="s", ms=5, capsize=3, color=COLOURS.get(estimator),
+                        label=_label(estimator) + " (median, range over seeds)")
+            for xi, p in zip(x, pts):
+                if p[4] < 3:  # Section 9: one-seed and two-seed PINN rows are labelled
+                    ax.annotate("n=%d" % p[4], (xi, p[1]), xytext=(4, -8), textcoords="offset points", fontsize=5,
+                                color=COLOURS.get(estimator))
+            plotted["series"].setdefault(window, {})[estimator] = [list(p) for p in pts]
+        crossing = [c for c in table["crossovers"]
+                    if (c["influent"], c["anchor"], c["window"], c["status"]) == (influent, anchor, window, "crosses")
+                    and abs(c["sigma"] - sigma) < 1e-9 and c["estimator"] in ("ode_openloop_reduced", "eks")]
+        for k, c in enumerate(sorted(crossing, key=lambda c: c["alpha_star"])):
+            ax.axvline(c["alpha_star"], color=COLOURS.get(c["estimator"]), ls=":", lw=0.9)
+            # staggered heights so labels of nearby crossovers do not overlap
+            ax.annotate(" alpha* = %.2f" % c["alpha_star"], (c["alpha_star"], 0.97 - 0.08 * k),
+                        xycoords=("data", "axes fraction"), fontsize=6, va="top", color=COLOURS.get(c["estimator"]))
+            plotted["crossovers"].append(c)
         ax.set_title("window %s" % window, fontsize=9)
     fig.supxlabel("kinetic mismatch alpha (0 = vault 20 C truth, 1 = BSM1 15 C kinetic set)", fontsize=8)
     axes[0].set_ylabel("Track B NRMSE (fixed R0 range)", fontsize=8)
-    axes[1].legend(fontsize=6, loc="upper left")
+    handles, labels = [], []
+    for ax in axes:
+        for h, lab in zip(*ax.get_legend_handles_labels()):
+            if lab not in labels:
+                handles.append(h)
+                labels.append(lab)
+    fig.legend(handles, labels, loc="outside lower center", ncol=4, fontsize=6, frameon=False)
     recovery = [p for p in table["parameter_recovery"] if p["cell"] == recovery_cell and abs(p["sigma"] - sigma) < 1e-9
                 and p["estimator"] in RECOVERY_ESTIMATORS]
+    inset = ax_rec
+    inset.set_title("parameter recovery, %s" % cell_label(recovery_cell), fontsize=8)
     if recovery:
-        inset = axes[0].inset_axes([0.14, 0.56, 0.34, 0.38])
         lims = []
         for p in recovery:
             names = [n for n in p["names"] if p["true_log_ratio"][n] is not None]
@@ -352,9 +374,12 @@ def fig4_mismatch(table: dict[str, Any], png: Path, sigma: float, influent: str 
         if lims:
             lo, hi = min(lims) - 0.1, max(lims) + 0.1
             inset.plot([lo, hi], [lo, hi], color="0.5", lw=0.6)
-        inset.set_xlabel("true ln ratio", fontsize=6, labelpad=1)
-        inset.set_ylabel("estimated ln m", fontsize=6, labelpad=1)
-        inset.tick_params(labelsize=5)
+        inset.set_xlabel("true ln(truth / vault)", fontsize=7, labelpad=1)
+        inset.set_ylabel("estimated ln m", fontsize=7, labelpad=1)
+        inset.tick_params(labelsize=6)
+        for est in RECOVERY_ESTIMATORS:
+            inset.scatter([], [], s=10, color=COLOURS.get(est), label=_label(est))
+        inset.legend(fontsize=6, loc="upper left", frameon=False)
     save_figure(fig, png)
     plt.close(fig)
     return plotted
@@ -423,11 +448,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--sigma", type=float, default=0.10)
     parser.add_argument("--map-cell", default="k000_ie_a0", help="cell for Figs 2c and 3")
     parser.add_argument("--rec-map", default="results/v11/analysis/recoverability_k000.json")
-    parser.add_argument("--rec-realistic", default="results/v11/analysis/recoverability_k100.json")
+    parser.add_argument("--rec-realistic", default=None,
+                        help="default: <root>/analysis/recoverability_k<meta.realistic_k>.json")
     parser.add_argument("--validation", default="results/v11/analysis/validation/recoverability_validation.json")
     parser.add_argument("--h6-cell", default=None,
                         help="cell of Fig. 2c; default: the primary cell of the validation file, else --map-cell")
-    parser.add_argument("--realistic-k", default="100", help="'050' when gate D3 moved the realistic cells")
+    parser.add_argument("--realistic-k", default=None,
+                        help="default: regime_table meta.realistic_k ('050' after gate D3); must agree with it")
     parser.add_argument("--paper-dir", default="paper/figures")
     args = parser.parse_args(argv)
     root = Path(args.root)
@@ -435,21 +462,31 @@ def main(argv: list[str] | None = None) -> None:
     fig_dir.mkdir(parents=True, exist_ok=True)
     table = json.loads((root / "regime_table.json").read_text(encoding="utf-8"))
     states = json.loads((root / "regime_states.json").read_text(encoding="utf-8"))
+    meta_k = table.get("meta", {}).get("realistic_k")
+    realistic_k = args.realistic_k or meta_k or "100"
+    if meta_k is not None and realistic_k != meta_k:
+        raise ValueError("--realistic-k %s disagrees with the regime table (realistic cells k%s, gate D3)"
+                         % (realistic_k, meta_k))
+    rec_real_path = args.rec_realistic or str(root / "analysis" / ("recoverability_k%s.json" % realistic_k))
     rec_map = load_recoverability(Path(args.rec_map))
-    rec_real = load_recoverability(Path(args.rec_realistic))
-    validation = Path(args.validation) if Path(args.validation).exists() else None
-    sources: dict[str, Any] = {"inputs": {"regime_table": str(root / "regime_table.json"),
-                                          "regime_states": str(root / "regime_states.json"),
-                                          "rec_map": args.rec_map, "rec_realistic": args.rec_realistic,
-                                          "validation": args.validation if validation else None}}
+    rec_real = load_recoverability(Path(rec_real_path))
+    if rec_real.get("tag") not in (None, "k%s" % realistic_k):
+        raise ValueError("%s is tagged %r, not k%s" % (rec_real_path, rec_real.get("tag"), realistic_k))
+    if not Path(args.validation).exists():
+        raise FileNotFoundError("validation file %s not found; run scripts.recoverability_validation" % args.validation)
+    validation = Path(args.validation)
+    sources: dict[str, Any] = {"inputs": {"regime_table": str(root / "regime_table.json").replace("\\", "/"),
+                                          "regime_states": str(root / "regime_states.json").replace("\\", "/"),
+                                          "rec_map": args.rec_map, "rec_realistic": rec_real_path.replace("\\", "/"),
+                                          "validation": args.validation, "realistic_k": realistic_k}}
     h6_cell = args.h6_cell
-    if h6_cell is None and validation is not None:
+    if h6_cell is None:
         h6_cell = normalise_validation(json.loads(validation.read_text(encoding="utf-8"))).get("primary_cell")
     sources["fig2"] = fig2_recoverability(rec_map, states, validation, fig_dir / "fig2_recoverability.png",
                                           h6_cell or args.map_cell, args.sigma)
     sources["fig3"] = fig3_ladder(table, fig_dir / "fig3_ladder.png", args.map_cell, args.sigma)
     sources["fig4"] = fig4_mismatch(table, fig_dir / "fig4_mismatch.png", args.sigma, recovery_cell="k100_ie_a0")
-    sources["fig5"] = fig5_factorial(table, states, rec_real, fig_dir / "fig5_factorial.png", args.realistic_k,
+    sources["fig5"] = fig5_factorial(table, states, rec_real, fig_dir / "fig5_factorial.png", realistic_k,
                                      args.sigma)
     (fig_dir / "figure_sources.json").write_text(json.dumps(sources, indent=1, default=float), encoding="utf-8")
     written = sorted(fig_dir.glob("fig[2-5]_*.p*"))

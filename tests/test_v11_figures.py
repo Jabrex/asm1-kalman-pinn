@@ -209,3 +209,35 @@ def test_recovery_inset_keeps_the_h3_pair_only(artefacts):
     vf.main(_argv(artefacts))
     fig4 = json.loads((artefacts / "figures" / "figure_sources.json").read_text(encoding="utf-8"))["fig4"]
     assert [p["estimator"] for p in fig4["recovery"]] == ["cl_pinn_theta"]
+
+
+# -- review fixes (independent G7 review, 2026-09-26) -------------------------------------------------
+def test_figures_refuse_a_missing_validation_file(artefacts):
+    argv = _argv(artefacts)
+    argv[argv.index("--validation") + 1] = str(artefacts / "analysis" / "missing.json")
+    with pytest.raises(FileNotFoundError):
+        vf.main(argv)
+
+
+def test_realistic_cells_follow_the_regime_table(artefacts):
+    table_path = artefacts / "regime_table.json"
+    table = json.loads(table_path.read_text(encoding="utf-8"))
+    table["meta"]["realistic_k"] = "050"
+    table_path.write_text(json.dumps(table), encoding="utf-8")
+    with pytest.raises(ValueError, match="gate D3|not k050"):
+        vf.main(_argv(artefacts))  # the argv passes the k100 recoverability file
+
+
+def test_fig2c_needs_the_validation_entry_of_the_h6_cell(artefacts):
+    states = json.loads((artefacts / "regime_states.json").read_text(encoding="utf-8"))
+    idx = np.ones((5, 11))
+    val = _g4_validation("k000_ie_a0", {"eks": (idx, 0.5), "cl_pinn": (idx, 0.4)})
+    del val["cells"]["k000_ie_a0"]["estimators"]["cl_pinn"]
+    path = artefacts / "analysis" / "validation" / "recoverability_validation.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(val), encoding="utf-8")
+    assert vf.state_entry(states, "k000_ie_a0", 0.1, "cl_pinn", "R0") is not None
+    argv = _argv(artefacts)
+    argv[argv.index("--validation") + 1] = str(path)
+    with pytest.raises(ValueError, match="no cl_pinn entry"):
+        vf.main(argv)
