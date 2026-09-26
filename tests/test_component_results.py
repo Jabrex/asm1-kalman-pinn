@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from scripts import component_results
 
@@ -67,3 +68,24 @@ def test_track_b_row_can_be_the_median_over_seeds_of_the_primary_metric(tmp_path
     last = (out / "component_table_m.tex").read_text(encoding="utf-8").strip().splitlines()[-1]
     assert last.startswith("Track~B (median over seeds) & ")
     assert last.split("&")[1].strip().rstrip("\\").strip() == "%.3f" % np.median(means)
+
+
+def test_split_layout_writes_one_file_per_model_and_component(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from scripts.figure_layout import DOUBLE_IN
+
+    monkeypatch.chdir(REPO)
+    out = tmp_path / "out"
+    component_results.main(["--runs", "results/runs", "results/runs_seed1", "--data-dir", "results/raw",
+                            "--sigmas", "0.10", "--models", "cl_pinn", "pinn", "persistence",
+                            "--heat-models", "cl_pinn", "pinn", "--table-models", "cl_pinn", "pinn",
+                            "--window", "train", "--out-dir", str(out), "--tag", "_s", "--figure-layout", "split"])
+    fig_dir = out / "figures"
+    names = sorted(p.name for p in fig_dir.glob("*.png"))
+    assert names == sorted(["per_tank_heatmap_s_cl_pinn.png", "per_tank_heatmap_s_pinn.png",
+                            "trajectories_trackB_s_X_B_H.png", "trajectories_trackB_s_X_S.png",
+                            "trajectories_trackB_s_S_ND.png"])
+    for name in names:
+        assert Image.open(fig_dir / name).size[0] / 600 == pytest.approx(DOUBLE_IN, abs=2 / 600)
+        assert (fig_dir / name).with_suffix(".pdf").exists()

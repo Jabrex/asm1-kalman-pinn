@@ -58,3 +58,23 @@ def test_figure_window_and_metric_are_selectable(tmp_path, monkeypatch):
                      "--figure-set", "train", "--figure-metric", "track_b_nrmse_fixed",
                      "--out-dir", str(out), "--tag", "_r0"])
     assert (out / "figures" / "noise_robustness_bands_r0.png").exists()
+
+
+def test_column_layout_is_one_journal_column(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from scripts.figure_layout import COLUMN_IN
+
+    monkeypatch.chdir(REPO)
+    roots = []
+    for k, src in enumerate(("results/runs", "results/runs_seed1")):
+        root = tmp_path / ("cell_seed%d" % k)
+        shutil.copytree(REPO / src / "cl_pinn_sigma0p10", root / "cl_pinn_sigma0p10")
+        roots.append(str(root))
+    out = tmp_path / "out"
+    seed_bands.main(["--runs", *roots, "--band-models", "cl_pinn", "--context-models", "--figure-set", "train",
+                     "--figure-metric", "track_b_nrmse_fixed", "--out-dir", str(out), "--tag", "_c",
+                     "--figure-layout", "column"])
+    png = out / "figures" / "noise_robustness_bands_c.png"
+    assert abs(Image.open(png).size[0] / 600 - COLUMN_IN) < 2 / 600
+    assert png.with_suffix(".pdf").exists()

@@ -97,10 +97,15 @@ def _argv(root: Path) -> list[str]:
 def test_all_figures_and_sources_are_written(artefacts):
     vf.main(_argv(artefacts))
     fig_dir = artefacts / "figures"
-    for stem in ("fig2_recoverability", "fig3_ladder", "fig4_mismatch", "fig5_factorial"):
+    stems = ("fig2a_recoverability_classes", "fig2b_memory_time", "fig2c_index_vs_error", "fig3a_ladder_R0",
+             "fig3b_ladder_F", "fig4a_mismatch_R0", "fig4b_mismatch_F", "fig4c_parameter_recovery", "fig4_legend",
+             "fig5a_influent_kinetics", "fig5b_start_state_tiers", "fig5c_recoverability_class", "fig5_legend")
+    for stem in stems:
         assert (fig_dir / (stem + ".png")).exists() and (fig_dir / (stem + ".pdf")).exists()
     sources = json.loads((fig_dir / "figure_sources.json").read_text(encoding="utf-8"))
-    assert set(sources) >= {"inputs", "fig2", "fig3", "fig4", "fig5"}
+    assert set(sources) >= {"inputs", "fig2", "fig3", "fig4", "fig5", "layout"}
+    listed = {name for key in ("fig2", "fig3", "fig4", "fig5") for name in sources[key]["files"]}
+    assert listed == {stem + ext for stem in stems for ext in (".png", ".pdf")}
     assert sources["fig3"]["cl_pinn"]["R0"]["median"] == pytest.approx(0.15 * 1.05)
     assert sources["fig4"]["crossovers"][0]["alpha_star"] == 0.45
     assert sum(sources["fig2"]["class_counts"].values()) == 55
@@ -241,3 +246,74 @@ def test_fig2c_needs_the_validation_entry_of_the_h6_cell(artefacts):
     argv[argv.index("--validation") + 1] = str(path)
     with pytest.raises(ValueError, match="no cl_pinn entry"):
         vf.main(argv)
+
+
+# -- print layout (2026-09-26): one file per panel, at its printed width --------------------------------
+def test_every_panel_is_drawn_at_a_journal_width(artefacts):
+    from PIL import Image
+
+    from scripts.figure_layout import COLUMN_IN, DOUBLE_IN
+
+    vf.main(_argv(artefacts))
+    sources = json.loads((artefacts / "figures" / "figure_sources.json").read_text(encoding="utf-8"))
+    widths = set()
+    for key in ("fig2", "fig3", "fig4", "fig5"):
+        for name in sources[key]["files"]:
+            if name.endswith(".png"):
+                width = Image.open(artefacts / "figures" / name).size[0] / 600
+                assert min(abs(width - COLUMN_IN), abs(width - DOUBLE_IN)) < 2 / 600, name
+                widths.add(round(width, 2))
+    assert widths == {round(COLUMN_IN, 2), round(DOUBLE_IN, 2)}
+
+
+def test_every_panel_goes_through_the_layout_check(artefacts, monkeypatch):
+    """Each written file passes save_checked once; a forced collision stops the script."""
+    import matplotlib.axes
+
+    checked = []
+    original_check = vf.save_checked
+
+    def spy(fig, png, save):
+        checked.append(Path(png).name)
+        return original_check(fig, png, save)
+
+    monkeypatch.setattr(vf, "save_checked", spy)
+    vf.main(_argv(artefacts))
+    sources = json.loads((artefacts / "figures" / "figure_sources.json").read_text(encoding="utf-8"))
+    pngs = [n for key in ("fig2", "fig3", "fig4", "fig5") for n in sources[key]["files"] if n.endswith(".png")]
+    assert sorted(checked) == sorted(pngs) and len(checked) == len(set(checked)) == 13
+
+    original = matplotlib.axes.Axes.set_title
+
+    def crowded(self, label, *args, **kwargs):
+        out = original(self, label, *args, **kwargs)
+        self.text(0.5, 0.5, "collision one", transform=self.transAxes)
+        self.text(0.52, 0.5, "collision two", transform=self.transAxes)
+        return out
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "set_title", crowded)
+    with pytest.raises(ValueError, match="layout issue"):
+        vf.main(_argv(artefacts))
+
+
+def test_fig5_names_missing_pinn_arms_and_counts_the_classes(artefacts):
+    table_path = artefacts / "regime_table.json"
+    table = json.loads(table_path.read_text(encoding="utf-8"))
+    table["rows"] = [r for r in table["rows"]
+                     if not (r["estimator"] == "cl_pinn" and r["cell"] in ("k000_ib_a0", "k100_ib_a0", "k100_ic_al2"))]
+    table_path.write_text(json.dumps(table), encoding="utf-8")
+    captured = {}
+    original = vf._legend_file
+
+    def spy(handles, png, ncol=4):
+        captured[Path(png).name] = [h.get_label() for h in handles]
+        return original(handles, png, ncol)
+
+    import pytest as _pytest
+
+    with _pytest.MonkeyPatch.context() as mp:
+        mp.setattr(vf, "_legend_file", spy)
+        vf.main(_argv(artefacts))
+    assert "CL-PINN (not run with Ib or Al2)" in captured["fig5_legend.png"]
+    fig5 = json.loads((artefacts / "figures" / "figure_sources.json").read_text(encoding="utf-8"))["fig5"]
+    assert sum(fig5["c_counts"].values()) == 55

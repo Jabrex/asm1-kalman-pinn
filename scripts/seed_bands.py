@@ -14,6 +14,11 @@ appear as plain lines from the first root.
 
 A run with a variant (the E3 sensor variants) gets its own band, keyed
 ``<model>[<variant>]|<sigma>|<set>``; plain runs keep the v1.0 key.
+
+--figure-layout column (v1.1) draws the band figure at one journal column
+(85 mm) with no text below 7 pt and no title (the caption carries it);
+scripts/figure_layout.py refuses cut-off or colliding text. The default (v10)
+keeps the v1.0 figure.
 """
 
 from __future__ import annotations
@@ -62,8 +67,64 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
                         help="evaluation set drawn in the band figure (v1.0: holdout)")
     parser.add_argument("--figure-metric", default="track_b_nrmse", choices=sorted(METRIC_TEXT),
                         help="metric drawn in the band figure (v1.0: track_b_nrmse)")
+    parser.add_argument("--cell-label", default="", help="column layout: the cell in the title, e.g. 'K.5 Ic As'")
+    parser.add_argument("--figure-layout", choices=("v10", "column"), default="v10",
+                        help="v10: the v1.0 figure (default); column: one journal column, print-size text")
     parser.add_argument("--no-figures", action="store_true")
     return parser.parse_args(argv)
+
+
+#: Column-layout names and axis text.
+PRETTY = {"cl_pinn": "CL-PINN", "pinn": "PINN, single-stage", "cl_pinn_theta": "PINN-$\\theta$",
+          "cl_lstm": "CL-LSTM", "lstm": "LSTM"}
+SET_TEXT_SHORT = {"holdout": "days 12\u201314", "train": "days 0\u201312", "rain": "rain event"}
+METRIC_TEXT_SHORT = {"track_b_nrmse": "Track B NRMSE", "track_b_nrmse_fixed": "Track B NRMSE (fixed R0 range)",
+                     "track_a_nrmse": "Track A NRMSE"}
+
+
+def column_figure(rows: list[dict], bands: dict, args: argparse.Namespace, fig_path: Path) -> list[Path]:
+    """The band figure at one column width: median line, min-max band, seed counts in the legend.
+
+    The y axis starts at zero, so that the size of the change with sigma is read against the error itself.
+    """
+    from scripts.figure_layout import COLUMN_IN, print_style, save_checked
+
+    fset, fmetric = args.figure_set, args.figure_metric
+    noises = sorted({row["noise"] for row in rows})
+    with print_style():
+        fig, ax = plt.subplots(figsize=(COLUMN_IN, 2.7), layout="constrained")
+        for model in args.band_models:
+            keys = ["%s|%.2f|%s" % (model, sigma, fset) for sigma in noises]
+            xs = [sigma for sigma, key in zip(noises, keys) if key in bands]
+            pts = [bands[key][fmetric] for key in keys if key in bands]
+            if not pts:
+                continue
+            counts = [p["n"] for p in pts]
+            seeds = ("%d seeds" % counts[0]) if len(set(counts)) == 1 else "seeds %s at \u03c3 = %s" % (
+                ", ".join(str(n) for n in counts), ", ".join("%.2f" % x for x in xs))
+            ax.plot(xs, [p["median"] for p in pts], marker="o", ms=3, color=COLORS.get(model),
+                    label="%s, median (%s)" % (PRETTY.get(model, model), seeds))
+            ax.fill_between(xs, [p["min"] for p in pts], [p["max"] for p in pts], color=COLORS.get(model),
+                            alpha=0.2, lw=0, label="%s, min\u2013max over seeds" % PRETTY.get(model, model))
+        for model in args.context_models:
+            pts = sorted((row["noise"], row[fmetric]) for row in rows
+                         if row["model"] == model and row["eval_set"] == fset and row["seed_source"] == 0
+                         and not row.get("variant"))
+            if pts:
+                ax.plot([p[0] for p in pts], [p[1] for p in pts], marker="s", ms=3, ls="--",
+                        color=COLORS.get(model), alpha=0.7, label="%s (single seed)" % PRETTY.get(model, model))
+        ax.set_xticks(noises)
+        ax.set_ylim(0.0, ax.get_ylim()[1] * 1.15)
+        ax.set_xlabel("measurement noise $\\sigma$")
+        ax.set_ylabel("%s\n%s" % (METRIC_TEXT_SHORT[fmetric], SET_TEXT_SHORT[fset]))
+        ax.set_title(("%s, %s" % (", ".join(PRETTY.get(m, m) for m in args.band_models), args.cell_label))
+                     if args.cell_label else ", ".join(PRETTY.get(m, m) for m in args.band_models), loc="left")
+        fig.legend(loc="outside lower center", ncol=1)
+        fig_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            return save_checked(fig, fig_path, save_figure)
+        finally:
+            plt.close(fig)
 
 
 def band_label(row: dict) -> str:
@@ -112,7 +173,9 @@ def main(argv: list[str] | None = None) -> None:
     out_path.write_text(json.dumps(bands, indent=2), encoding="utf-8")
 
     fig_path = out_dir / "figures" / ("noise_robustness_bands%s.png" % args.tag)
-    if not args.no_figures:
+    if not args.no_figures and args.figure_layout == "column":
+        column_figure(rows, bands, args, fig_path)
+    elif not args.no_figures:
         # --- banded noise-robustness figure (v1.0: holdout, Track B) -------
         fset, fmetric = args.figure_set, args.figure_metric
         fig, ax = plt.subplots(figsize=(7, 4.5))

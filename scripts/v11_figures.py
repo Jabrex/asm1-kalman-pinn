@@ -13,9 +13,15 @@ normalise_validation); the flat layout of the plan contract is accepted too.
 Fig. 2c shows the registered H6 cell with the index points of the validation
 file and the per-state errors of regime_states.json; it refuses to draw when
 the two give different rho, which means the error definitions differ.
-Outputs: results/v11/figures/fig{2,3,4,5}_*.{png,pdf} (600 dpi PNG + vector PDF),
-copied to --paper-dir when it exists, and results/v11/figures/figure_sources.json,
-which lists every plotted number and the file it came from.
+Outputs: one file per panel, each drawn at its printed width (one column, 85 mm, or the
+full page, 178 mm) with no text below 7 pt, so that it stays legible in the journal PDF:
+    fig2a_recoverability_classes, fig2b_memory_time, fig2c_index_vs_error,
+    fig3a_ladder_R0, fig3b_ladder_F,
+    fig4a_mismatch_R0, fig4b_mismatch_F, fig4c_parameter_recovery, fig4_legend,
+    fig5a_influent_kinetics, fig5b_start_state_tiers, fig5c_recoverability_class, fig5_legend
+under results/v11/figures (600 dpi PNG + vector PDF), copied to --paper-dir when it exists.
+scripts/figure_layout.py refuses a panel with text that is too small, cut off or colliding.
+results/v11/figures/figure_sources.json lists every plotted number and file.
 """
 
 from __future__ import annotations
@@ -31,12 +37,14 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.ticker import NullFormatter  # noqa: E402
 import numpy as np  # noqa: E402
 from scipy.stats import spearmanr  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.regime_map import PRETTY, TRACK_B, base_model, cell_label  # noqa: E402
+from scripts.figure_layout import COLUMN_IN, DOUBLE_IN, print_style, save_checked  # noqa: E402
 from src.eval.report import save_figure  # noqa: E402
 
 CLASSES = ("sensor-recoverable", "partly recoverable", "forcing-slaved", "anchor-carried")
@@ -192,9 +200,63 @@ def _label(estimator: str) -> str:
     return PRETTY.get(base, base) + estimator[len(base):]
 
 
+# -- print layout -----------------------------------------------------------------
+#: Component names as set in the figures.
+COMPONENT_TEXT = {"S_I": "$S_I$", "S_S": "$S_S$", "X_I": "$X_I$", "X_S": "$X_S$", "X_B_H": "$X_{B,H}$",
+                  "X_B_A": "$X_{B,A}$", "X_P": "$X_P$", "S_ND": "$S_{ND}$", "X_ND": "$X_{ND}$",
+                  "S_ALK": "$S_{ALK}$", "S_N2": "$S_{N2}$"}
+#: Kinetic names of the parameter-recovery panel, with one marker shape each.
+PARAMETER_TEXT = {"bH": "$b_H$", "muA": "$\\mu_A$", "kh": "$k_h$", "etag": "$\\eta_g$"}
+PARAMETER_MARKERS = {"bH": "o", "muA": "s", "kh": "^", "etag": "D"}
+CLASS_SHORT = {"sensor-recoverable": "sensor", "partly recoverable": "partly", "forcing-slaved": "forcing",
+               "anchor-carried": "anchor"}
+#: Classes on a dark fill carry white numbers.
+DARK_CLASSES = ("sensor-recoverable", "anchor-carried")
+WINDOW_TEXT = {"R0": "days 0\u201312", "R2": "days 2\u201312", "F": "days 12\u201314"}
+MINUS = "\u2212"
+#: One label for the primary metric in every figure.
+METRIC_LABEL = "Track B NRMSE (fixed R0 range)"
+#: Pre-registered class rules (PREREGISTRATION.md Section 7), shown in the Fig. 2a legend.
+CLASS_RULE = {"sensor-recoverable": "IG \u2265 0.5", "partly recoverable": "all other states",
+              "forcing-slaved": "forcing share > 0.5, \u03c4 < 1 d", "anchor-carried": "\u03c4 > 6 d, IG < 0.5"}
+
+
+def _num(value: float, pattern: str = "%.2f") -> str:
+    """A number as set in the figures (typographic minus)."""
+    return (pattern % value).replace("-", MINUS)
+
+
+def _component(name: str) -> str:
+    return COMPONENT_TEXT.get(name, name.replace("_", ""))
+
+
+def _value(v: float, n: int = 1) -> str:
+    """Ladder value: three decimals, two significant figures below 0.01; '(n)' seeds when more than one."""
+    text = _num(v, "%.2g" if abs(v) < 0.01 else "%.3f")
+    return text + (" (%d)" % n if n > 1 else "")
+
+
+def _save(fig, png: Path) -> list[Path]:
+    """Refuse a figure whose text is too small, cut off or colliding; else write PNG + PDF."""
+    try:
+        return save_checked(fig, png, save_figure)
+    finally:
+        plt.close(fig)
+
+
+def rec_label(rec: dict[str, Any]) -> str:
+    """'K0 Ie As' (kinetics, influent view, anchor prior) for a G4 recoverability file."""
+    tag = str(rec.get("tag", ""))
+    k = cell_label("%s_ie_a0" % tag).split(" ")[0] if tag.startswith("k") else tag
+    influent = {"exact": "Ie", "composite": "Ic", "composite_biased": "Ib"}.get(rec.get("influent_mode"), "")
+    prior = Path(str((rec.get("prior") or {}).get("file", ""))).stem if isinstance(rec.get("prior"), dict) else ""
+    return " ".join(p for p in (k, influent, prior) if p)
+
+
 # -- Fig. 2 -----------------------------------------------------------------------
-def fig2_recoverability(rec: dict[str, Any], states: dict[str, Any], validation: Path | None, png: Path,
+def fig2_recoverability(rec: dict[str, Any], states: dict[str, Any], validation: Path | None, fig_dir: Path,
                         cell: str, sigma: float, estimators: tuple[str, ...] = ("eks", "cl_pinn")) -> dict[str, Any]:
+    """Three files: (a) class map with information gain, (b) memory time, (c) index against error."""
     index_name, val = validation_lookup(validation)
     if any(index_name not in s for s in rec["states"]):
         raise KeyError("recoverability file lacks the validation index %r" % index_name)
@@ -202,42 +264,52 @@ def fig2_recoverability(rec: dict[str, Any], states: dict[str, Any], validation:
     ig = state_grid(rec, "ig")
     tau = state_grid(rec, "tau_days")
     index = state_grid(rec, index_name)
-    fig = plt.figure(figsize=(7.2, 7.4), layout="constrained")
-    gs = fig.add_gridspec(2, 2, height_ratios=[1.0, 1.15])
-    ax_a = fig.add_subplot(gs[0, :])
-    colour_idx = np.array([[CLASSES.index(c) if c else -1 for c in row] for row in classes], dtype=float)
+    stats: dict[str, Any] = {"index": index_name, "cell": cell, "sigma": sigma, "estimators": {}, "files": []}
     from matplotlib.colors import ListedColormap
 
-    ax_a.imshow(np.ma.masked_less(colour_idx, 0), cmap=ListedColormap([CLASS_COLOURS[c] for c in CLASSES]),
-                vmin=-0.5, vmax=len(CLASSES) - 0.5, aspect="auto")
+    # (a) class per tank and state, information gain as the number
+    fig, ax = plt.subplots(figsize=(DOUBLE_IN, 2.3), layout="constrained")
+    colour_idx = np.array([[CLASSES.index(c) if c else -1 for c in row] for row in classes], dtype=float)
+    ax.imshow(np.ma.masked_less(colour_idx, 0), cmap=ListedColormap([CLASS_COLOURS[c] for c in CLASSES]),
+              vmin=-0.5, vmax=len(CLASSES) - 0.5, aspect="auto")
     for k in range(5):
         for j in range(len(TRACK_B)):
             if np.isfinite(ig[k, j]):
-                ax_a.text(j, k, "%.2f" % ig[k, j], ha="center", va="center", fontsize=7)
-    ax_a.set_xticks(range(len(TRACK_B)))
-    ax_a.set_xticklabels([c.replace("_", "") for c in TRACK_B], fontsize=8)
-    ax_a.set_yticks(range(5))
-    ax_a.set_yticklabels(["tank %d" % (k + 1) for k in range(5)], fontsize=8)
-    ax_a.set_title("(a) recoverability class per tank and state (text: information gain)", fontsize=9, loc="left")
+                ax.text(j, k, _num(ig[k, j]), ha="center", va="center", fontsize=7,
+                        color="white" if classes[k][j] in DARK_CLASSES else "black")
+    ax.set_xticks(range(len(TRACK_B)))
+    ax.set_xticklabels([_component(c) for c in TRACK_B])
+    ax.set_yticks(range(5))
+    ax.set_yticklabels(["tank %d" % (k + 1) for k in range(5)])
+    ax.set_title("(a) Recoverability class (colour) and information gain (number), %s" % rec_label(rec), loc="left")
     handles = [plt.Rectangle((0, 0), 1, 1, color=CLASS_COLOURS[c]) for c in CLASSES]
-    ax_a.legend(handles, CLASSES, fontsize=7, ncol=4, loc="upper center", bbox_to_anchor=(0.5, -0.12), frameon=False)
+    present = {c for row in classes for c in row}
+    fig.legend(handles, ["%s (%s%s)" % (c, CLASS_RULE[c], "" if c in present else "; none") for c in CLASSES],
+               loc="outside lower center", ncol=2)
+    stats["files"] += [p.name for p in _save(fig, fig_dir / "fig2a_recoverability_classes.png")]
 
-    ax_b = fig.add_subplot(gs[1, 0])
+    # (b) start-up memory time
+    fig, ax = plt.subplots(figsize=(COLUMN_IN, 2.7), layout="constrained")
     med = np.nanmedian(tau, axis=0)
     lo, hi = np.nanmin(tau, axis=0), np.nanmax(tau, axis=0)
-    ax_b.bar(range(len(TRACK_B)), med, color="0.6", yerr=[med - lo, hi - med], capsize=2)
-    ax_b.axhline(THRESHOLD_TAU_DAYS, color="tab:red", ls="--", lw=0.8, label="anchor-carried threshold (6 d)")
-    ax_b.axhline(WINDOW_DAYS, color="black", ls=":", lw=0.8, label="window R0 length (12 d)")
-    ax_b.set_yscale("log")
-    ax_b.set_xticks(range(len(TRACK_B)))
-    ax_b.set_xticklabels([c.replace("_", "") for c in TRACK_B], rotation=60, fontsize=7)
-    ax_b.set_ylabel("start-up memory time (d)", fontsize=8)
-    ax_b.set_title("(b) memory time, median and range over tanks", fontsize=9, loc="left")
-    ax_b.legend(fontsize=6)
+    ax.bar(range(len(TRACK_B)), med, color="0.6", yerr=[med - lo, hi - med], capsize=1.5,
+           error_kw={"elinewidth": 0.6, "capthick": 0.6})
+    longest = int(np.nanargmax(med))
+    ax.axhline(THRESHOLD_TAU_DAYS, color="tab:red", ls="--", lw=0.8,
+               label="anchor-carried threshold, 6 d (longest: %s, %.2f d)" % (_component(TRACK_B[longest]),
+                                                                            med[longest]))
+    ax.axhline(WINDOW_DAYS, color="black", ls=":", lw=0.8, label="length of window R0 (12 d)")
+    ax.set_yscale("log")
+    ax.set_xticks(range(len(TRACK_B)))
+    ax.set_xticklabels([_component(c) for c in TRACK_B], rotation=45, ha="right", rotation_mode="anchor")
+    ax.set_ylabel("start-up memory time $\\tau$ (d)")
+    ax.set_title("(b) Memory time, %s" % rec_label(rec), loc="left")
+    fig.legend(loc="outside lower center", ncol=1)
+    stats["files"] += [p.name for p in _save(fig, fig_dir / "fig2b_memory_time.png")]
 
-    ax_c = fig.add_subplot(gs[1, 1])
-    stats: dict[str, Any] = {"index": index_name, "cell": cell, "sigma": sigma, "estimators": {}}
-    for estimator in estimators:
+    # (c) registered index against the achieved per-state error (H6)
+    fig, ax = plt.subplots(figsize=(COLUMN_IN, 3.1), layout="constrained")
+    for n_est, estimator in enumerate(estimators):
         err = state_entry(states, cell, sigma, estimator, "R0")
         if err is None:
             continue
@@ -254,150 +326,213 @@ def fig2_recoverability(rec: dict[str, Any], states: dict[str, Any], validation:
         if entry is not None and abs(float(entry["rho"]) - rho) > 1e-6:
             raise ValueError("Fig. 2c points give rho %.6f for %s but the validation file reports %.6f; the two "
                              "scripts use different error definitions" % (rho, estimator, float(entry["rho"])))
-        text = "rho = %.2f" % rho if entry is None else "rho = %.2f [%.2f, %.2f]" % (rho, *entry["ci"])
+        text = "\u03c1 = %s" % _num(rho) if entry is None else "\u03c1 = %s [%s, %s]" % (
+            _num(rho), _num(entry["ci"][0]), _num(entry["ci"][1]))
         # Display only: states with an index below the floor (numerically zero) are drawn at the floor
         # as open markers; rho above is computed from the actual values.
         shown = np.maximum(idx[mask], INDEX_FLOOR)
         low = idx[mask] < INDEX_FLOOR
-        ax_c.scatter(shown[~low], err[mask][~low], s=10, color=COLOURS.get(estimator), alpha=0.8,
-                     label="%s: %s" % (_label(estimator), text))
+        ax.scatter(shown[~low], err[mask][~low], s=9, color=COLOURS.get(estimator), alpha=0.85, linewidths=0,
+                   label="%s: %s" % (_label(estimator), text))
         if low.any():
-            ax_c.scatter(shown[low], err[mask][low], s=14, facecolors="none", edgecolors=COLOURS.get(estimator),
-                         linewidths=0.8)
+            # side by side at the floor so that both estimators stay visible
+            nudge = (0.8, 1.25)[n_est % 2]
+            ax.scatter(np.full(int(low.sum()), INDEX_FLOOR * nudge), err[mask][low], s=14, marker="<",
+                       facecolors="none", edgecolors=COLOURS.get(estimator), linewidths=0.7)
         stats["estimators"][estimator] = {"rho_points": rho, "n_points": int(mask.sum()),
                                           "n_below_display_floor": int(low.sum()),
                                           "validation": None if entry is None else
                                           {k: v for k, v in entry.items() if k != "points_index"}}
-    ax_c.set_xscale("log")
-    ax_c.set_yscale("log")
+    ax.set_xscale("log")
+    ax.set_yscale("log")
     if any(e.get("n_below_display_floor") for e in stats["estimators"].values()):
-        ax_c.axvline(INDEX_FLOOR, color="0.6", lw=0.6, ls=":")
-        ax_c.text(INDEX_FLOOR, 0.02, " open: index < %g" % INDEX_FLOOR, transform=ax_c.get_xaxis_transform(),
-                  fontsize=6, color="0.4")
+        ax.axvline(INDEX_FLOOR, color="0.6", lw=0.6, ls=":")
+        ax.scatter([], [], s=14, marker="<", facecolors="none", edgecolors="0.3", linewidths=0.7,
+                   label="index < 10$^{-4}$ (open triangles at 10$^{-4}$)")
     stats["index_display_floor"] = INDEX_FLOOR
-    ax_c.set_xlabel("%s (model-derived index)" % index_name.replace("_", " "), fontsize=8)
-    ax_c.set_ylabel("per-state NRMSE, window R0", fontsize=8)
-    ax_c.set_title("(c) index against achieved error, %s" % cell_label(cell), fontsize=9, loc="left")
-    ax_c.legend(fontsize=6)
-    save_figure(fig, png)
-    plt.close(fig)
+    ax.set_xlabel("CRB / range (model-derived index)" if index_name == "crb_over_range"
+                  else "%s (model-derived index)" % index_name.replace("_", " "))
+    ax.set_ylabel("per-state NRMSE, %s" % WINDOW_TEXT["R0"])
+    ax.set_title("(c) Index against error, %s" % cell_label(cell), loc="left")
+    fig.legend(loc="outside lower center", ncol=1)
+    stats["files"] += [p.name for p in _save(fig, fig_dir / "fig2c_index_vs_error.png")]
     stats["class_counts"] = {c: int(sum(row.count(c) for row in classes)) for c in CLASSES}
     return stats
 
 
 # -- Fig. 3 -----------------------------------------------------------------------
-def fig3_ladder(table: dict[str, Any], png: Path, cell: str, sigma: float) -> dict[str, Any]:
-    fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.8), sharey=True, layout="constrained")
-    plotted: dict[str, Any] = {}
-    for ax, window in zip(axes, ("R0", "F")):
+def fig3_ladder(table: dict[str, Any], fig_dir: Path, cell: str, sigma: float) -> dict[str, Any]:
+    """One file per window: median (diamond; value and seed count at the right edge), persistence line.
+
+    Both windows share one x range so that the panels can be read side by side.
+    """
+    from matplotlib.lines import Line2D
+    from matplotlib.transforms import blended_transform_factory
+
+    plotted: dict[str, Any] = {"files": []}
+    medians = [r["median"] for w in ("R0", "F") for e, r in rows_for(table, cell, sigma, w).items() if e in LADDER]
+    xlim = (min(medians) / 2.5, max(medians) * 2.5) if medians else None
+    for letter, window in (("a", "R0"), ("b", "F")):
         rows = rows_for(table, cell, sigma, window)
         ladder = [e for e in LADDER if e in rows]
+        fig, ax = plt.subplots(figsize=(COLUMN_IN, 2.9), layout="constrained")
+        at_right = blended_transform_factory(ax.transAxes, ax.transData)
         for y, estimator in enumerate(ladder):
             r = rows[estimator]
-            ax.scatter(r["values"], [y] * len(r["values"]), s=12, color="0.6", zorder=2)
-            ax.scatter([r["median"]], [y], s=40, marker="D", color=COLOURS.get(estimator, "black"), zorder=3)
-            ax.annotate("%.3f" % r["median"], (r["median"], y), xytext=(4, 5), textcoords="offset points",
-                        fontsize=6)
+            ax.scatter([r["median"]], [y], s=26, marker="D", color=COLOURS.get(estimator, "black"), zorder=3,
+                       linewidths=0)
+            ax.text(1.03, y, _value(r["median"], r["n"]), transform=at_right, va="center", ha="left", fontsize=7)
             plotted.setdefault(estimator, {})[window] = {"median": r["median"], "values": r["values"]}
         if "persistence" in rows:
             ax.axvline(rows["persistence"]["median"], color="0.45", ls="--", lw=0.8)
         ax.set_xscale("log")
-        ax.margins(x=0.25)
+        ax.margins(y=0.08)
+        if xlim:
+            ax.set_xlim(*xlim)
+        # a range under one decade would otherwise label the minor ticks, and they collide
+        ax.xaxis.set_minor_formatter(NullFormatter())
         ax.set_yticks(range(len(ladder)))
-        ax.set_yticklabels([_label(e) for e in ladder], fontsize=8)
-        ax.set_xlabel("Track B NRMSE (fixed R0 range)", fontsize=8)
-        ax.set_title("window %s" % window, fontsize=9)
-    fig.suptitle("Correct kinetics (%s, sigma = %.2f): grey dots are seeds, diamonds medians; "
-                 "* = more information" % (cell_label(cell), sigma), fontsize=8)
-    save_figure(fig, png)
-    plt.close(fig)
+        ax.set_yticklabels([_label(e) for e in ladder])
+        ax.set_xlabel(METRIC_LABEL)
+        # left-aligned to the figure: the long row labels leave the axes too narrow for the title
+        fig.suptitle("(%s) Window %s (%s), %s" % (letter, window, WINDOW_TEXT[window], cell_label(cell)),
+                     x=0.02, ha="left")
+        handles = [Line2D([], [], marker="D", ls="none", color="black", ms=4,
+                          label="median; (n) = seeds, if more than one"),
+                   Line2D([], [], ls="--", color="0.45", lw=0.8, label="persistence")]
+        fig.legend(handles=handles, loc="outside lower center", ncol=2)
+        plotted["files"] += [p.name for p in _save(fig, fig_dir / ("fig3%s_ladder_%s.png" % (letter, window)))]
     return plotted
 
 
 # -- Fig. 4 -----------------------------------------------------------------------
-def fig4_mismatch(table: dict[str, Any], png: Path, sigma: float, influent: str = "ie", anchor: str = "a0",
+def _legend_file(handles: list, png: Path, ncol: int = 4) -> list[Path]:
+    """A legend drawn on its own, shared by the panels of one figure."""
+    rows = -(-len(handles) // ncol)
+    fig = plt.figure(figsize=(DOUBLE_IN, 0.12 + 0.17 * rows))
+    fig.legend(handles=handles, loc="center", ncol=ncol)
+    return _save(fig, png)
+
+
+def fig4_mismatch(table: dict[str, Any], fig_dir: Path, sigma: float, influent: str = "ie", anchor: str = "a0",
                   recovery_cell: str = "k100_ie_a0") -> dict[str, Any]:
-    fig = plt.figure(figsize=(7.2, 3.9), layout="constrained")
-    gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 1.0, 0.8])
-    ax_r0 = fig.add_subplot(gs[0, 0])
-    axes = [ax_r0, fig.add_subplot(gs[0, 1], sharey=ax_r0)]
-    ax_rec = fig.add_subplot(gs[0, 2])
+    """(a) window R0 and (b) window F along the mismatch axis, (c) parameter recovery, plus a shared legend."""
+    from matplotlib.lines import Line2D
+
     grid = [r for r in table["rows"] if r["k"] is not None and not r["extra"] and r["rand"] is None
             and not r["offsteady"] and r["influent"] == influent and r["anchor"] == anchor
             and abs(r["sigma"] - sigma) < 1e-9]
-    plotted: dict[str, Any] = {"series": {}, "crossovers": [], "recovery": []}
-    for ax, window in zip(axes, ("R0", "F")):
+    plotted: dict[str, Any] = {"series": {}, "crossovers": [], "recovery": [], "files": []}
+    ymax = max([r["max"] for r in grid if r["estimator"] in ("persistence",) + LINE_ESTIMATORS + POINT_ESTIMATORS]
+               + [0.0])
+    for letter, window in (("a", "R0"), ("b", "F")):
+        fig, ax = plt.subplots(figsize=(COLUMN_IN, 2.8), layout="constrained")
         sub = [r for r in grid if r["window"] == window]
         for estimator in ("persistence",) + LINE_ESTIMATORS:
             pts = sorted((r["kinetic_alpha"], r["median"]) for r in sub if r["estimator"] == estimator)
             if len(pts) < 2:
                 continue
-            ax.plot([p[0] for p in pts], [p[1] for p in pts], marker="o", ms=3,
-                    ls="--" if estimator == "persistence" else "-", color=COLOURS.get(estimator), label=_label(estimator))
+            ax.plot([p[0] for p in pts], [p[1] for p in pts], marker="o", ms=2.5,
+                    ls="--" if estimator == "persistence" else "-", color=COLOURS.get(estimator))
             plotted["series"].setdefault(window, {})[estimator] = pts
         for estimator in POINT_ESTIMATORS:
             pts = sorted((r["kinetic_alpha"], r["median"], r["min"], r["max"], r["n"]) for r in sub
                          if r["estimator"] == estimator)
             if not pts:
                 continue
-            x = np.array([p[0] for p in pts]) + (0.012 if estimator == "cl_pinn_theta" else 0.0)
-            med = np.array([p[1] for p in pts])
-            ax.errorbar(x, med, yerr=[med - np.array([p[2] for p in pts]), np.array([p[3] for p in pts]) - med],
-                        fmt="s", ms=5, capsize=3, color=COLOURS.get(estimator),
-                        label=_label(estimator) + " (median, range over seeds)")
-            for xi, p in zip(x, pts):
-                if p[4] < 3:  # Section 9: one-seed and two-seed PINN rows are labelled
-                    ax.annotate("n=%d" % p[4], (xi, p[1]), xytext=(4, -8), textcoords="offset points", fontsize=5,
-                                color=COLOURS.get(estimator))
+            for p in pts:
+                # side by side at each alpha, clear of the line markers
+                x = p[0] + (0.025 if estimator == "cl_pinn_theta" else -0.025)
+                # Section 9: one-seed and two-seed PINN rows are labelled -- open marker
+                ax.errorbar([x], [p[1]], yerr=[[p[1] - p[2]], [p[3] - p[1]]], fmt="s", ms=4, capsize=2,
+                            elinewidth=0.7, capthick=0.7, color=COLOURS.get(estimator),
+                            mfc="white" if p[4] < 3 else COLOURS.get(estimator))
             plotted["series"].setdefault(window, {})[estimator] = [list(p) for p in pts]
         crossing = [c for c in table["crossovers"]
                     if (c["influent"], c["anchor"], c["window"], c["status"]) == (influent, anchor, window, "crosses")
                     and abs(c["sigma"] - sigma) < 1e-9 and c["estimator"] in ("ode_openloop_reduced", "eks")]
-        for k, c in enumerate(sorted(crossing, key=lambda c: c["alpha_star"])):
+        crossing = sorted(crossing, key=lambda c: c["alpha_star"])
+        for c in crossing:
             ax.axvline(c["alpha_star"], color=COLOURS.get(c["estimator"]), ls=":", lw=0.9)
-            # staggered heights so labels of nearby crossovers do not overlap
-            ax.annotate(" alpha* = %.2f" % c["alpha_star"], (c["alpha_star"], 0.97 - 0.08 * k),
-                        xycoords=("data", "axes fraction"), fontsize=6, va="top", color=COLOURS.get(c["estimator"]))
             plotted["crossovers"].append(c)
-        ax.set_title("window %s" % window, fontsize=9)
-    for ax in axes:
-        ax.set_xlabel("kinetic mismatch alpha\n(0 = vault 20 C, 1 = BSM1 15 C)", fontsize=7)
-    axes[0].set_ylabel("Track B NRMSE (fixed R0 range)", fontsize=8)
-    handles, labels = [], []
-    for ax in axes:
-        for h, lab in zip(*ax.get_legend_handles_labels()):
-            if lab not in labels:
-                handles.append(h)
-                labels.append(lab)
-    fig.legend(handles, labels, loc="outside lower center", ncol=4, fontsize=6, frameon=False)
+        if crossing:
+            # alpha* as coloured ticks on a top axis: no label can sit on a data line
+            top = ax.secondary_xaxis("top")
+            top.set_xticks([c["alpha_star"] for c in crossing])
+            # a label closer than 0.09 in alpha to the one before it is raised by one line
+            texts, raised = [], False
+            for k, c in enumerate(crossing):
+                raised = (not raised) and k > 0 and c["alpha_star"] - crossing[k - 1]["alpha_star"] < 0.09
+                texts.append(_num(c["alpha_star"]) + ("\n" if raised else ""))
+            labels = top.set_xticklabels(texts)
+            for lab, c in zip(labels, crossing):
+                lab.set_color(COLOURS.get(c["estimator"]))
+            top.set_xlabel("crossover $\\alpha^*$", labelpad=3)
+        ax.set_xlim(-0.06, 1.06)
+        ax.set_ylim(0.0, ymax * 1.06)
+        ax.set_xlabel("kinetic mismatch $\\alpha$\n(0 = vault 20 \u00b0C, 1 = BSM1 15 \u00b0C)")
+        ax.set_ylabel(METRIC_LABEL)
+        ax.set_title("(%s) Window %s (%s), %s %s" % (letter, window, WINDOW_TEXT[window], influent.capitalize(),
+                                                     anchor.capitalize()), loc="left")
+        plotted["files"] += [p.name for p in _save(fig, fig_dir / ("fig4%s_mismatch_%s.png" % (letter, window)))]
+
+    handles = [Line2D([], [], ls="--", marker="o", ms=2.5, color=COLOURS["persistence"], label=_label("persistence"))]
+    same_f = plotted["series"].get("F", {})
+    # on window F the smoother and the filter forecast from the same day-12 state
+    notes = {"ekf": " (equal to EKS on window F)"} if same_f.get("ekf") is not None \
+        and same_f.get("ekf") == same_f.get("eks") else {}
+    handles += [Line2D([], [], ls="-", marker="o", ms=2.5, color=COLOURS[e], label=_label(e) + notes.get(e, ""))
+                for e in LINE_ESTIMATORS]
+    handles += [Line2D([], [], ls="none", marker="s", ms=4, color=COLOURS[e],
+                       label="%s (median, range over seeds)" % _label(e)) for e in POINT_ESTIMATORS]
+    handles += [Line2D([], [], ls="none", marker="s", ms=4, color="0.3", mfc="white",
+                       label="open marker: fewer than three seeds"),
+                Line2D([], [], ls=":", lw=0.9, color="0.3",
+                       label="$\\alpha^*$: open loop or EKS crosses persistence (tick in its colour)")]
+    plotted["files"] += [p.name for p in _legend_file(handles, fig_dir / "fig4_legend.png", ncol=2)]
+
     recovery = [p for p in table["parameter_recovery"] if p["cell"] == recovery_cell and abs(p["sigma"] - sigma) < 1e-9
                 and p["estimator"] in RECOVERY_ESTIMATORS]
-    inset = ax_rec
-    inset.set_title("parameter recovery, %s" % cell_label(recovery_cell), fontsize=8)
-    if recovery:
-        lims = []
-        for p in recovery:
-            names = [n for n in p["names"] if p["true_log_ratio"][n] is not None]
-            for est in p["estimates"]:
-                xs = [p["true_log_ratio"][n] for n in names]
-                ys = [est["log_multiplier"][n] for n in names]
-                inset.scatter(xs, ys, s=10, color=COLOURS.get(base_model(p["estimator"]), "black"))
-                lims += xs + ys
-            if p is recovery[0]:
-                for n in names:
-                    inset.annotate(n, (p["true_log_ratio"][n], p["estimates"][0]["log_multiplier"][n]), fontsize=5)
-            plotted["recovery"].append(p)
-        if lims:
-            lo, hi = min(lims) - 0.1, max(lims) + 0.1
-            inset.plot([lo, hi], [lo, hi], color="0.5", lw=0.6)
-        inset.set_xlabel("true ln(truth / vault)", fontsize=7, labelpad=1)
-        inset.set_ylabel("estimated ln m", fontsize=7, labelpad=1)
-        inset.tick_params(labelsize=6)
-        for est in RECOVERY_ESTIMATORS:
-            inset.scatter([], [], s=10, color=COLOURS.get(est), label=_label(est))
-        inset.legend(fontsize=6, loc="upper left", frameon=False)
-    save_figure(fig, png)
-    plt.close(fig)
+    fig, ax = plt.subplots(figsize=(COLUMN_IN, 3.1), layout="constrained")
+    ax.set_title("(c) Parameter recovery, %s" % cell_label(recovery_cell), loc="left")
+    names_seen: list[str] = []
+    lims: list[float] = []
+    for p in recovery:
+        names = [n for n in p["names"] if p["true_log_ratio"][n] is not None]
+        for n in names:
+            if n not in names_seen:
+                names_seen.append(n)
+        for est in p["estimates"]:
+            for n in names:
+                x, y = p["true_log_ratio"][n], est["log_multiplier"][n]
+                ax.scatter([x], [y], s=16, marker=PARAMETER_MARKERS.get(n, "o"), linewidths=0,
+                           color=COLOURS.get(base_model(p["estimator"]), "black"), alpha=0.9)
+                lims += [x, y]
+        plotted["recovery"].append(p)
+    if lims:
+        lo, hi = min(lims) - 0.1, max(lims) + 0.1
+        ax.plot([lo, hi], [lo, hi], color="0.5", lw=0.6)
+        ax.set_xlim(lo, hi)
+        ax.set_ylim(lo, hi)
+        ax.set_aspect("equal")
+    ax.set_xlabel("true ln(truth / vault)")
+    ax.set_ylabel("estimated ln(multiplier)")
+    # legend columns (filled top to bottom): estimators and the identity line, then the parameters
+    blank = Line2D([], [], ls="none", marker="none", label=" ")
+    column1 = [Line2D([], [], ls="none", marker="o", ms=4, color=COLOURS.get(e), label=_label(e))
+               for e in RECOVERY_ESTIMATORS if any(base_model(p["estimator"]) == e for p in recovery)]
+    if lims:
+        column1.append(Line2D([], [], color="0.5", lw=0.6, label="exact recovery"))
+    params = [Line2D([], [], ls="none", marker=PARAMETER_MARKERS.get(n, "o"), ms=4, color="0.35",
+                     label=PARAMETER_TEXT.get(n, n)) for n in names_seen]
+    rows = max(len(column1), -(-len(params) // 2), 1)
+    handles = column1 + [blank] * (rows - len(column1))
+    for start in range(0, len(params), rows):
+        chunk = params[start:start + rows]
+        handles += chunk + [blank] * (rows - len(chunk))
+    if handles and any(h.get_label().strip() for h in handles):
+        fig.legend(handles=handles, loc="outside lower center", ncol=len(handles) // rows)
+    plotted["files"] += [p.name for p in _save(fig, fig_dir / "fig4c_parameter_recovery.png")]
     return plotted
 
 
@@ -406,33 +541,46 @@ def _grouped_bars(ax, table: dict[str, Any], cells: list[str], sigma: float, lab
     width = 0.8 / len(FACTORIAL_ESTIMATORS)
     out: dict[str, Any] = {}
     for j, estimator in enumerate(FACTORIAL_ESTIMATORS):
-        labelled = False
         for i, cell in enumerate(cells):
             r = rows_for(table, cell, sigma, "R0").get(estimator)
             if r is None:
                 continue
             x = i + (j - (len(FACTORIAL_ESTIMATORS) - 1) / 2) * width
-            ax.bar(x, r["median"], width, color=COLOURS.get(estimator), label=None if labelled else _label(estimator),
-                   yerr=[[r["median"] - r["min"]], [r["max"] - r["median"]]] if r["n"] > 1 else None, capsize=2)
-            labelled = True
+            ax.bar(x, r["median"], width, color=COLOURS.get(estimator),
+                   yerr=[[r["median"] - r["min"]], [r["max"] - r["median"]]] if r["n"] > 1 else None, capsize=1.5,
+                   error_kw={"elinewidth": 0.6, "capthick": 0.6})
             out.setdefault(cell, {})[estimator] = r["median"]
     ax.set_xticks(range(len(cells)))
-    ax.set_xticklabels(labels, fontsize=7)
+    ax.set_xticklabels(labels)
+    ax.set_xlim(-0.5, len(cells) - 0.5)
     return out
 
 
-def fig5_factorial(table: dict[str, Any], states: dict[str, Any], rec_realistic: dict[str, Any], png: Path,
+def fig5_factorial(table: dict[str, Any], states: dict[str, Any], rec_realistic: dict[str, Any], fig_dir: Path,
                    realistic_k: str, sigma: float) -> dict[str, Any]:
-    fig, axes = plt.subplots(1, 3, figsize=(7.2, 3.6), layout="constrained")
+    """(a) influent x kinetics, (b) start-state tiers, (c) error by recoverability class, plus a shared legend."""
     k = realistic_k
+    files: list[str] = []
+    ylabel = METRIC_LABEL
+
+    fig, ax = plt.subplots(figsize=(COLUMN_IN, 2.6), layout="constrained")
     cells_a = ["k000_ie_a0", "k000_ic_a0", "k000_ib_a0", "k%s_ie_a0" % k, "k%s_ic_a0" % k, "k%s_ib_a0" % k]
-    plotted = {"a": _grouped_bars(axes[0], table, cells_a, sigma, [cell_label(c).replace(" A0", "") for c in cells_a])}
-    axes[0].set_title("(a) influent x kinetics, A0", fontsize=8, loc="left")
-    axes[0].set_ylabel("Track B NRMSE, window R0", fontsize=8)
+    plotted = {"a": _grouped_bars(ax, table, cells_a, sigma,
+                                  [cell_label(c).replace(" A0", "").replace(" ", "\n") for c in cells_a])}
+    ax.set_title("(a) Influent \u00d7 kinetics, A0", loc="left")
+    ax.set_ylabel(ylabel)
+    files += [p.name for p in _save(fig, fig_dir / "fig5a_influent_kinetics.png")]
+
+    fig, ax = plt.subplots(figsize=(COLUMN_IN, 2.6), layout="constrained")
     cells_b = ["k%s_ic_%s" % (k, a) for a in ("a0", "as", "al1", "al2")]
-    plotted["b"] = _grouped_bars(axes[1], table, cells_b, sigma, ["A0", "As", "Al1", "Al2"])
-    axes[1].set_title("(b) start-state tiers, %s" % cell_label(cells_b[0]).rsplit(" ", 1)[0], fontsize=8, loc="left")
+    plotted["b"] = _grouped_bars(ax, table, cells_b, sigma, ["A0", "As", "Al1", "Al2"])
+    ax.set_title("(b) Start-state tiers, %s" % cell_label(cells_b[0]).rsplit(" ", 1)[0], loc="left")
+    ax.set_ylabel(ylabel)
+    files += [p.name for p in _save(fig, fig_dir / "fig5b_start_state_tiers.png")]
+
+    fig, ax = plt.subplots(figsize=(COLUMN_IN, 2.6), layout="constrained")
     classes = class_grid(rec_realistic)
+    counts = {c: int(sum(row.count(c) for row in classes)) for c in CLASSES}
     cell_c = "k%s_ic_as" % k
     width = 0.8 / len(FACTORIAL_ESTIMATORS)
     plotted["c"] = {}
@@ -445,16 +593,26 @@ def fig5_factorial(table: dict[str, Any], states: dict[str, Any], rec_realistic:
             if not mask.any():
                 continue
             value = float(np.nanmean(err[mask]))
-            axes[2].bar(i + (j - (len(FACTORIAL_ESTIMATORS) - 1) / 2) * width, value, width,
-                        color=COLOURS.get(estimator))
+            ax.bar(i + (j - (len(FACTORIAL_ESTIMATORS) - 1) / 2) * width, value, width, color=COLOURS.get(estimator))
             plotted["c"].setdefault(cls, {})[estimator] = value
-    axes[2].set_xticks(range(len(CLASSES)))
-    axes[2].set_xticklabels(["sensor", "partly", "forcing", "anchor"], fontsize=7)
-    axes[2].set_title("(c) by recoverability class, %s" % cell_label(cell_c), fontsize=8, loc="left")
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="outside lower center", ncol=len(labels), fontsize=7, frameon=False)
-    save_figure(fig, png)
-    plt.close(fig)
+    ax.set_xticks(range(len(CLASSES)))
+    ax.set_xticklabels(["%s\n(n = %d)" % (CLASS_SHORT[c], counts[c]) for c in CLASSES])
+    ax.set_xlim(-0.5, len(CLASSES) - 0.5)
+    ax.set_xlabel("class from the %s recoverability map" % rec_label(rec_realistic))
+    ax.set_title("(c) Error by class, %s" % cell_label(cell_c), loc="left")
+    ax.set_ylabel("mean per-state NRMSE (fixed R0 range)")
+    files += [p.name for p in _save(fig, fig_dir / "fig5c_recoverability_class.png")]
+    plotted["c_counts"] = counts
+
+    no_pinn = [lab for lab, cells in (("Ib", cells_a[2::3]), ("Al2", cells_b[3:]))
+               if not any(rows_for(table, c, sigma, "R0").get("cl_pinn") for c in cells)]
+    labels = [_label(e) for e in FACTORIAL_ESTIMATORS]
+    if no_pinn and "cl_pinn" in FACTORIAL_ESTIMATORS:
+        labels[FACTORIAL_ESTIMATORS.index("cl_pinn")] += " (not run with %s)" % " or ".join(no_pinn)
+    handles = [plt.Rectangle((0, 0), 1, 1, color=COLOURS.get(e), label=lab)
+               for e, lab in zip(FACTORIAL_ESTIMATORS, labels)]
+    files += [p.name for p in _legend_file(handles, fig_dir / "fig5_legend.png", ncol=len(handles))]
+    plotted["files"] = files
     return plotted
 
 
@@ -498,14 +656,16 @@ def main(argv: list[str] | None = None) -> None:
     h6_cell = args.h6_cell
     if h6_cell is None:
         h6_cell = normalise_validation(json.loads(validation.read_text(encoding="utf-8"))).get("primary_cell")
-    sources["fig2"] = fig2_recoverability(rec_map, states, validation, fig_dir / "fig2_recoverability.png",
-                                          h6_cell or args.map_cell, args.sigma)
-    sources["fig3"] = fig3_ladder(table, fig_dir / "fig3_ladder.png", args.map_cell, args.sigma)
-    sources["fig4"] = fig4_mismatch(table, fig_dir / "fig4_mismatch.png", args.sigma, recovery_cell="k100_ie_a0")
-    sources["fig5"] = fig5_factorial(table, states, rec_real, fig_dir / "fig5_factorial.png", realistic_k,
-                                     args.sigma)
+    with print_style():
+        sources["fig2"] = fig2_recoverability(rec_map, states, validation, fig_dir, h6_cell or args.map_cell,
+                                              args.sigma)
+        sources["fig3"] = fig3_ladder(table, fig_dir, args.map_cell, args.sigma)
+        sources["fig4"] = fig4_mismatch(table, fig_dir, args.sigma, recovery_cell="k100_ie_a0")
+        sources["fig5"] = fig5_factorial(table, states, rec_real, fig_dir, realistic_k, args.sigma)
+    sources["layout"] = {"column_in": COLUMN_IN, "double_in": DOUBLE_IN,
+                         "note": "each file is drawn at its printed width; include it at natural size"}
     (fig_dir / "figure_sources.json").write_text(json.dumps(sources, indent=1, default=float), encoding="utf-8")
-    written = sorted(fig_dir.glob("fig[2-5]_*.p*"))
+    written = [fig_dir / name for key in ("fig2", "fig3", "fig4", "fig5") for name in sources[key]["files"]]
     if args.paper_dir and Path(args.paper_dir).exists():
         for path in written:
             shutil.copy2(path, Path(args.paper_dir) / path.name)

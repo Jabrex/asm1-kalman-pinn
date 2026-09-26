@@ -20,6 +20,12 @@ v1.1 cells pass their own run roots, data directory and an output tag, e.g.
       --out-dir results/v11 --tag _k100_ic_as_R0
 Every root is searched for <model>_sigma<tag>/predictions.npz; a model found
 under several roots (one per seed) is summarised by the median.
+
+--figure-layout split (v1.1) writes one heatmap per model and one trajectory
+figure per component, each drawn at its printed width with no text below 7 pt
+(scripts/figure_layout.py refuses cut-off or colliding text):
+  <out>/figures/per_tank_heatmap<tag>_<model>.*   <out>/figures/trajectories_trackB<tag>_<component>.*
+The default (v10) keeps the combined v1.0 figures.
 """
 from __future__ import annotations
 
@@ -110,8 +116,107 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--trackb-row", choices=("mean-of-medians", "median-of-means"), default="mean-of-medians",
                         help="'Track B mean' row: v1.0 mean of the per-component medians (default), or the median "
                              "over seeds of each seed's Track B mean, the primary metric of the v1.1 regime table")
+    parser.add_argument("--cell-label", default="",
+                        help="split layout: the cell as set in the figure titles, e.g. 'K0 Ie A0'")
+    parser.add_argument("--figure-layout", choices=("v10", "split"), default="v10",
+                        help="v10: the combined v1.0 figures (default); split: one print-size file per model "
+                             "(heatmap) and per component (trajectories)")
     parser.add_argument("--no-figures", action="store_true")
     return parser.parse_args(argv)
+
+
+#: Split-layout text (typographic dash) and the estimator names of the other v1.1 figures.
+SPLIT_WINDOW_TEXT = {"holdout": "held-out days 12\u201314", "train": "days 0\u201312"}
+SPLIT_TITLES = {"cl_pinn": "CL-PINN", "pinn": "PINN, single-stage", "cl_pinn_theta": "PINN-$\\theta$",
+                "eks": "EKS", "eks_aug": "Aug. EKS"}
+#: Drawn in this order, the CL-PINN last and on top: (colour, line style, width, name).
+TRAJECTORY_STYLE = {
+    "persistence": ("0.4", ":", 0.9, "Persistence"),
+    "eks": ("tab:blue", "--", 0.9, "EKS"),
+    "pinn": ("tab:red", "-.", 0.8, "PINN, single-stage"),
+    "cl_pinn": ("tab:orange", "-", 1.1, "CL-PINN"),
+}
+#: The y axis is fitted to the curves after this time, so that one start value cannot flatten the panel.
+TRAJECTORY_YFIT_AFTER_D = 0.05
+TRAJECTORY_COMPONENTS = ("X_B_H", "X_S", "S_ND")
+TRAJECTORY_TANKS = (0, 4)
+
+
+def split_heatmaps(heat: dict[str, np.ndarray], models: list[str], components: tuple[str, ...], window: str,
+                   sigma: float, fig_dir: Path, file_tag: str, cell_label: str = "") -> list[Path]:
+    """One per-tank heatmap per model, full page width."""
+    from scripts.figure_layout import DOUBLE_IN, print_style, save_checked
+
+    written: list[Path] = []
+    vmax = 1.0
+    with print_style():
+        for model in models:
+            grid = heat[model]
+            fig, ax = plt.subplots(figsize=(DOUBLE_IN, 2.3), layout="constrained")
+            im = ax.imshow(np.clip(grid, 0, vmax), cmap="viridis", vmin=0, vmax=vmax, aspect="auto")
+            ax.set_xticks(range(len(components)))
+            ax.set_xticklabels([LABELS[c] for c in components])
+            ax.set_yticks(range(5))
+            ax.set_yticklabels(["tank %d" % (k + 1) for k in range(5)])
+            ax.tick_params(length=0)
+            for k in range(5):
+                for i in range(len(components)):
+                    val = grid[k, i]
+                    ax.text(i, k, "%.2f" % val if np.isfinite(val) else "n/a", ha="center", va="center", fontsize=7,
+                            color="white" if (not np.isfinite(val) or val < 0.55 * vmax) else "black")
+            ax.set_title("%s%s: NRMSE (fixed R0 range) per tank and component, %s, $\\sigma = %.2f$"
+                         % (SPLIT_TITLES.get(model, model), ", " + cell_label if cell_label else "",
+                            SPLIT_WINDOW_TEXT[window], sigma), loc="left")
+            cbar = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
+            cbar.set_label("NRMSE,\ncolour capped at %.1f" % vmax)
+            try:
+                written += save_checked(fig, fig_dir / ("per_tank_heatmap%s_%s.png" % (file_tag, model)), save_figure)
+            finally:
+                plt.close(fig)
+    return written
+
+
+def split_trajectories(t: np.ndarray, truth: np.ndarray, preds: dict[str, np.ndarray | None],
+                       components: tuple[str, ...], window: str, sigma: float, fig_dir: Path,
+                       file_tag: str, cell_label: str = "") -> list[Path]:
+    """One figure per never-measured component: tanks 1 and 5 side by side, legend below."""
+    from scripts.figure_layout import DOUBLE_IN, print_style, save_checked
+
+    written: list[Path] = []
+    with print_style():
+        for comp in TRAJECTORY_COMPONENTS:
+            ci = components.index(comp)
+            fig, axes = plt.subplots(1, len(TRAJECTORY_TANKS), figsize=(DOUBLE_IN, 2.4), sharex=True,
+                                     layout="constrained")
+            cut = False
+            for n, (ax, k) in enumerate(zip(axes, TRAJECTORY_TANKS)):
+                ax.plot(t, truth[:, k, ci], color="black", lw=1.2, label="ground truth")
+                series = [truth[:, k, ci]]
+                for z, (m, (col, ls, lw, lab)) in enumerate(TRAJECTORY_STYLE.items()):
+                    if preds.get(m) is not None:
+                        nn = min(len(t), len(preds[m]))
+                        ax.plot(t[:nn], preds[m][:nn, k, ci], color=col, ls=ls, lw=lw, label=lab, zorder=2 + z)
+                        series.append(np.pad(preds[m][:nn, k, ci], (0, len(t) - nn), constant_values=np.nan))
+                stack = np.vstack(series)
+                late = stack[:, t > TRAJECTORY_YFIT_AFTER_D]
+                lo, hi = np.nanmin(late), np.nanmax(late)
+                pad = 0.06 * (hi - lo if hi > lo else abs(hi) or 1.0)
+                ax.set_ylim(lo - pad, hi + pad)
+                cut = cut or bool(np.nanmin(stack) < lo - pad or np.nanmax(stack) > hi + pad)
+                ax.set_title("(%s) tank %d" % ("ab"[n], k + 1), loc="left")
+                ax.set_ylabel("%s (g m$^{-3}$)" % LABELS[comp])
+                ax.set_xlabel("time (d)")
+            fig.suptitle("%s%s, %s, $\\sigma = %.2f$, seed 0%s"
+                         % (LABELS[comp], ", " + cell_label if cell_label else "", SPLIT_WINDOW_TEXT[window], sigma,
+                            "; start values beyond the axis are cut" if cut else ""), x=0.01, ha="left")
+            handles, labels = axes[0].get_legend_handles_labels()
+            fig.legend(handles, labels, loc="outside lower center", ncol=len(labels))
+            try:
+                written += save_checked(fig, fig_dir / ("trajectories_trackB%s_%s.png" % (file_tag, comp)),
+                                        save_figure)
+            finally:
+                plt.close(fig)
+    return written
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -184,6 +289,20 @@ def main(argv: list[str] | None = None) -> None:
     # Stacked panels: at text width (about 16 cm) the cell annotations stay
     # legible, which they do not in a side-by-side layout.
     heat_models = [m for m in args.heat_models if m in heat]
+    if args.figure_layout == "split":
+        fig_dir.mkdir(parents=True, exist_ok=True)
+        written = split_heatmaps(heat, heat_models, components, args.window, args.heat_sigma, fig_dir, args.tag,
+                                 args.cell_label)
+        for model in heat_models:
+            print("%s heatmap max cell %.3f; per-tank Track B mean by tank:" % (model, np.nanmax(heat[model])),
+                  np.round(np.nanmean(heat[model][:, [components.index(c) for c in track_b]], axis=1), 3))
+        hold, _ = truth_for(args.heat_sigma, Path(args.data_dir), args.window)
+        preds = {m: first_pred(roots, m, args.heat_sigma, args.window) for m in TRAJECTORY_STYLE}
+        written += split_trajectories(hold.t, hold.truth_reactor, preds, components, args.window, args.heat_sigma,
+                                      fig_dir, args.tag, args.cell_label)
+        for path in written:
+            print("wrote", path)
+        return
     if heat_models:
         fig_dir.mkdir(parents=True, exist_ok=True)
         fig, axes = plt.subplots(len(heat_models), 1, figsize=(7.2, 2.9 * len(heat_models)), sharex=True,

@@ -1117,8 +1117,22 @@ def write_outputs(result: dict[str, Any], out_dir: Path) -> list[Path]:
     return paths
 
 
-# -- heatmap (Fig. 6 and the graphical-abstract panel) ----------------------------
-WINDOW_MARKER = {"R0": "o", "R2": "s", "F": "^"}
+# -- heatmap (Fig. 6, the Supplementary map and the graphical-abstract panel) ------
+WINDOW_TEXT = {"R0": "days 0\u201312", "R2": "days 2\u201312", "F": "days 12\u201314"}
+#: Column names of the narrow graphical-abstract panel.
+GA_TEXT = {"persistence": "Persistence", "ode_openloop_reduced": "Open loop", "cl_pinn": "CL-PINN", "eks": "EKS",
+           "eks_aug": "Aug. EKS"}
+#: Heatmap slot of the planned WER graphical abstract (plan Task 8.15: 16 x 9 cm canvas, heatmap 7.1 x 6.9 cm);
+#: the current paper/graphical_abstract.tex is the superseded C&CE version.
+GA_SIZE_IN = (7.1 / 2.54, 6.9 / 2.54)
+
+
+def skill_text(val: float) -> str:
+    """Cell number: two decimals, three when a non-zero skill would print as 0.00; typographic minus."""
+    if abs(val) < 0.0005:
+        return "0.00"
+    return ("%.3f" % val if abs(val) < 0.005 else "%.2f" % val).replace("-", "\u2212")
+NOT_RUN_GREY = "0.88"
 
 
 def cell_label(cell: str) -> str:
@@ -1164,82 +1178,147 @@ def skill_matrix(table: dict[str, Any], window: str, sigma: float, cells: list[s
     return out
 
 
-def plot_heatmap(table: dict[str, Any], png_path: Path, sigma: float = 0.10,
-                 windows: tuple[str, ...] = ("R0", "F"), cells: list[str] | None = None,
-                 estimators: list[str] | None = None, compact: bool = False) -> list[Path]:
+def _estimator_text(estimator: str) -> str:
+    return PRETTY.get(base_model(estimator), estimator) + estimator[len(base_model(estimator)):]
+
+
+def plot_heatmap(table: dict[str, Any], png_path: Path, sigma: float = 0.10, window: str = "R0",
+                 cells: list[str] | None = None, estimators: list[str] | None = None, style: str = "main",
+                 title: str | None = None) -> list[Path]:
+    """One window of the regime map, drawn at its printed size.
+
+    ``style``: ``"main"`` (Fig. 6, full page width, numbers in the cells), ``"si"`` (the same for many
+    cells) or ``"ga"`` (the graphical-abstract slot, colours only). The best row entry of the window
+    is outlined, every tied entry too; cells without a row are grey; a row whose skill is not finite
+    reads 'fail' (failed or diverged run) or 'n/a'; a diverged row with a finite value is marked with a
+    double dagger (Section 5: it never wins).
+    """
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.colors import TwoSlopeNorm
+    from matplotlib.patches import Rectangle
+
+    from scripts.figure_layout import DOUBLE_IN, print_style, save_checked, wrap
 
     cells = cells or default_cells(table, sigma)
     estimators = estimators or default_estimators(table, sigma, cells)
     if not cells or not estimators:
         raise ValueError("regime table has no grid rows at sigma = %.2f" % sigma)
-    win = {(w["cell"], w["window"]): w["estimator"] for w in table["winners"] if abs(w["sigma"] - sigma) < 1e-9}
-    width = min(7.2 if compact else 16.0, 2.2 + 0.62 * len(estimators) * len(windows))
-    height = 2.6 + 0.34 * len(cells)
-    fig, axes = plt.subplots(1, len(windows), figsize=(width, height), sharey=True, squeeze=False,
-                             layout="constrained")
-    norm = TwoSlopeNorm(vmin=-1.0, vcenter=0.0, vmax=1.0)
-    image = None
-    for ax, window in zip(axes[0], windows):
+    if style not in ("main", "si", "ga"):
+        raise ValueError("unknown heatmap style %r" % style)
+    win = {w["cell"]: [w["estimator"]] + list(w.get("tied_with") or []) for w in table["winners"]
+           if abs(w["sigma"] - sigma) < 1e-9 and w["window"] == window}
+    numbers = style != "ga"
+    if style == "ga":
+        size = GA_SIZE_IN
+    else:
+        row_in = 0.26 if style == "main" else 0.175
+        size = (DOUBLE_IN, max(2.6, 1.95 + row_in * len(cells)))
+    with print_style():
+        fig, ax = plt.subplots(figsize=size, layout="constrained")
         grid = skill_matrix(table, window, sigma, cells, estimators)
         rows_here = {(r["cell"], r["estimator"]): r for r in table["rows"]
                      if r["window"] == window and abs(r["sigma"] - sigma) < 1e-9}
-        image = ax.imshow(np.clip(grid, -1.0, 1.0), cmap="RdBu", norm=norm, aspect="auto")
-        for i in range(len(cells)):
-            if not compact:
-                for j in range(len(estimators)):
+        ax.set_facecolor(NOT_RUN_GREY)
+        image = ax.imshow(np.clip(grid, -1.0, 1.0), cmap="RdBu", norm=TwoSlopeNorm(vmin=-1.0, vcenter=0.0, vmax=1.0),
+                          aspect="auto", interpolation="nearest")
+        used = set()
+        for i, cell in enumerate(cells):
+            if numbers:
+                for j, estimator in enumerate(estimators):
+                    row = rows_here.get((cell, estimator))
+                    if row is None:
+                        continue  # grey: not run in this cell
                     val = grid[i, j]
-                    row = rows_here.get((cells[i], estimators[j]))
-                    mark = "\u2020" if row is not None and seed_label(row) else ""
-                    ax.text(j, i, "n/a" if not np.isfinite(val) else "%.2f%s" % (val, mark), ha="center", va="center",
-                            fontsize=6,
-                            color="0.5" if not np.isfinite(val) else ("white" if abs(val) > 0.6 else "black"))
-            best = win.get((cells[i], window))
-            if best in estimators:
-                ax.scatter(estimators.index(best) + 0.3, i - 0.3, marker=WINDOW_MARKER[window], s=26,
-                           color="black", edgecolors="white", linewidths=0.6, zorder=3)
+                    bad = bool(row.get("failed") or row.get("diverged"))
+                    if not np.isfinite(val):
+                        text = "fail" if bad or val == -np.inf else "n/a"
+                        used.add(text)
+                        colour = "white" if val == -np.inf else "black"
+                    else:
+                        mark = "\u2020" if seed_label(row) else ("\u2021" if bad else "")
+                        used.update({mark} - {""})
+                        text = skill_text(val) + mark
+                        colour = "white" if abs(val) > 0.6 else "black"
+                    ax.text(j, i, text, ha="center", va="center", fontsize=7, color=colour)
+            best = [e for e in win.get(cell, []) if e in estimators]
+            if len(best) > 1:
+                used.add("tie")
+            for estimator in best:
+                j = estimators.index(estimator)
+                for lw, colour in ((2.4, "white"), (1.1, "black")):
+                    ax.add_patch(Rectangle((j - 0.5, i - 0.5), 1, 1, fill=False, lw=lw, ec=colour, zorder=3))
         ax.set_xticks(range(len(estimators)))
-        ax.set_xticklabels([PRETTY.get(base_model(e), e) + e[len(base_model(e)):] for e in estimators],
-                           rotation=60, ha="right", fontsize=7 if compact else 8)
-        ax.set_title("window %s (%s)" % (window, {"R0": "days 0-12", "R2": "days 2-12", "F": "days 12-14"}[window]),
-                     fontsize=9)
-    axes[0, 0].set_yticks(range(len(cells)))
-    axes[0, 0].set_yticklabels([cell_label(c) for c in cells], fontsize=8)
-    cbar = fig.colorbar(image, ax=axes[0].tolist(), fraction=0.035, pad=0.02)
-    cbar.set_label("skill = 1 - E/E$_{persist}$", fontsize=7)
-    marks = ", ".join("%s = best on %s" % ({"o": "dot", "s": "square", "^": "triangle"}[WINDOW_MARKER[w]], w)
-                      for w in windows)
-    if compact:
-        # the graphical-abstract panel is narrow: a short note on two lines
-        fig.supxlabel("%s; skill against anchor-aware persistence.\nsigma = %.2f, realisation 0." % (marks[:1].upper() + marks[1:],
-                      sigma), fontsize=6)
-    else:
-        fig.supxlabel("Markers: %s. * = more information, never a winner. \u2020 = PINN row with one or two seeds "
-                      "(labelled, Section 9). sigma = %.2f." % (marks, sigma), fontsize=6)
-    png_path = Path(png_path)
-    png_path.parent.mkdir(parents=True, exist_ok=True)
-    written = save_figure(fig, png_path)
-    plt.close(fig)
+        ax.set_xticklabels([GA_TEXT.get(e, _estimator_text(e)) if style == "ga" else _estimator_text(e)
+                            for e in estimators], rotation=45, ha="right", rotation_mode="anchor")
+        ax.set_yticks(range(len(cells)))
+        ax.set_yticklabels([cell_label(c) for c in cells])
+        ax.tick_params(length=0)
+        ax.set_title(title or "Window %s (%s)" % (window, WINDOW_TEXT[window]), loc="left")
+        cbar = fig.colorbar(image, ax=ax, fraction=0.05 if style == "ga" else 0.025, pad=0.02,
+                            ticks=[-1, -0.5, 0, 0.5, 1])
+        cbar.ax.set_yticklabels(["\u2264\u22121", "\u22120.5", "0", "0.5", "1"])
+        cbar.set_label("skill" if style != "ga" else "skill vs persistence")
+        if style == "ga":
+            note = "Outlined: best in the row. \u03c3 = %.2f." % sigma
+        else:
+            note = ("Numbers: skill = 1 \u2212 E/E$_{\\mathrm{persistence}}$ against anchor-aware persistence "
+                    "(\u03c3 = %.2f, noise realisation 0); colours clipped at \u22121. Outlined: best entry of the "
+                    "row on window %s%s. * = more information, never a winner." % (
+                        sigma, window, " (tied entries all outlined)" if "tie" in used else ""))
+            if "\u2020" in used:
+                note += " \u2020 = PINN row with one or two seeds (labelled; pre-registration Section 9)."
+            if "\u2021" in used:
+                note += " \u2021 = diverged run (pre-registration Section 5), never a winner."
+            if "fail" in used:
+                note += " fail = failed or diverged run."
+            if "n/a" in used:
+                note += " n/a = no score."
+            note += " Grey: not run in this cell."
+        fig.supxlabel(wrap(note, size[0] * 0.96), fontsize=7)
+        png_path = Path(png_path)
+        png_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            written = save_checked(fig, png_path, save_figure)
+        finally:
+            plt.close(fig)
     return written
 
 
 GA_ESTIMATORS = ("persistence", "ode_openloop_reduced", "cl_pinn", "eks", "eks_aug")
+#: Supplementary map: all grid cells, split by kinetics so that each page stays legible.
+SI_PARTS = (("k000-k025", ("000", "025")), ("k050-k100", ("050", "075", "100")))
 
 
 def plot(root: Path, sigma: float, paper_dir: Path | None) -> list[Path]:
+    """Fig. 6 (one file per window), the Supplementary map (per window and kinetics part) and the GA panel."""
     table = json.loads((Path(root) / "regime_table.json").read_text(encoding="utf-8"))
     fig_dir = Path(root) / "figures"
-    written = plot_heatmap(table, fig_dir / "fig6_regime_map.png", sigma=sigma)
-    written += plot_heatmap(table, fig_dir / "figS_regime_map_all_cells.png", sigma=sigma,
-                            cells=default_cells(table, sigma, pinn_only=False))
     cells = default_cells(table, sigma)
-    ga_est = [e for e in GA_ESTIMATORS if e in default_estimators(table, sigma, cells)]
-    written += plot_heatmap(table, fig_dir / "graphical_abstract_regime.png", sigma=sigma, windows=("R0",),
-                            cells=cells, estimators=ga_est, compact=True)
+    estimators = default_estimators(table, sigma, cells)
+    written: list[Path] = []
+    for letter, window in (("a", "R0"), ("b", "F")):
+        written += plot_heatmap(table, fig_dir / ("fig6%s_regime_map_%s.png" % (letter, window)), sigma=sigma,
+                                window=window, cells=cells, estimators=estimators,
+                                title="(%s) Window %s (%s)" % (letter, window, WINDOW_TEXT[window]))
+    all_cells = default_cells(table, sigma, pinn_only=False)
+    all_estimators = default_estimators(table, sigma, all_cells)
+    for window in ("R0", "F"):
+        for name, ks in SI_PARTS:
+            part = [c for c in all_cells if parse_cell(c)[0]["k"] in ks]
+            if not part:
+                continue
+            kin = list(dict.fromkeys(cell_label(c).split(" ")[0] for c in part))
+            written += plot_heatmap(table, fig_dir / ("figS_regime_map_%s_%s.png" % (window, name)), sigma=sigma,
+                                    window=window, cells=part, estimators=all_estimators, style="si",
+                                    title="Window %s (%s), cells %s" % (window, WINDOW_TEXT[window],
+                                                                       ", ".join(kin)))
+    ga_est = [e for e in GA_ESTIMATORS if e in estimators]
+    written += plot_heatmap(table, fig_dir / "graphical_abstract_regime.png", sigma=sigma, window="R0",
+                            cells=cells, estimators=ga_est, style="ga",
+                            title="Skill against persistence, %s" % WINDOW_TEXT["R0"])
     if paper_dir is not None and Path(paper_dir).exists():
         for path in written:
             shutil.copy2(path, Path(paper_dir) / path.name)

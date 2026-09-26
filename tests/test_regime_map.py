@@ -248,8 +248,20 @@ def test_heatmaps_are_written(v11_tree):
     rm.write_outputs(result, v11_tree)
     written = rm.plot(v11_tree, 0.10, None)
     names = {p.name for p in written}
-    assert {"fig6_regime_map.png", "fig6_regime_map.pdf", "graphical_abstract_regime.png",
-            "figS_regime_map_all_cells.pdf"} <= names
+    assert {"fig6a_regime_map_R0.png", "fig6a_regime_map_R0.pdf", "fig6b_regime_map_F.png",
+            "fig6b_regime_map_F.pdf", "graphical_abstract_regime.png", "graphical_abstract_regime.pdf"} <= names
+    for window in ("R0", "F"):
+        assert any(n.startswith("figS_regime_map_%s_" % window) and n.endswith(".pdf") for n in names)
+    # every file is drawn at its printed size: full page width, or the graphical-abstract slot
+    from PIL import Image
+
+    from scripts.figure_layout import DOUBLE_IN
+
+    for path in written:
+        if path.suffix == ".png":
+            width = Image.open(path).size[0] / 600
+            expected = rm.GA_SIZE_IN[0] if path.name.startswith("graphical") else DOUBLE_IN
+            assert width == pytest.approx(expected, abs=2 / 600), path.name
     assert rm.cell_label("k050_ic_al1") == "K.5 Ic Al1"
     assert rm.cell_label("k025_ie_a0") == "K.25 Ie A0"
 
@@ -333,3 +345,32 @@ def test_h7_is_not_decided_when_the_comparator_failed(v11_tree):
     hyp = rm.score(v11_tree, RES / "runs", "track_b_nrmse_fixed")["table"]["hypotheses"]
     assert hyp["H7"]["outcome"] == "not_decided" and hyp["H7"]["status"] == "not decided"
     assert hyp["H7"]["consequence"] == "curriculum claim withdrawn in full"
+
+
+def test_heatmap_outlines_every_tied_winner_and_prints_near_zero_skill(tmp_path, monkeypatch):
+    """Ties are all outlined (Section 9: equal values tie); a skill that rounds to 0.00 shows three decimals."""
+    from matplotlib.patches import Rectangle
+
+    def row(cell, est, skill, family="observers"):
+        return {"cell": cell, "estimator": est, "window": "F", "sigma": 0.1, "skill": skill, "primary": True,
+                "family": family, "n": 1, "k": "000", "extra": "", "rand": None, "failed": False, "diverged": False}
+
+    table = {"rows": [row("k000_ie_a0", "persistence", 0.0), row("k000_ie_a0", "ekf_aug", 0.19),
+                      row("k000_ie_a0", "eks_aug", 0.19), row("k000_ie_a0", "ekf", -0.004)],
+             "winners": [{"cell": "k000_ie_a0", "sigma": 0.1, "window": "F", "estimator": "ekf_aug",
+                          "tied_with": ["eks_aug"]}]}
+    seen = {}
+
+    def spy(fig, png, save):
+        ax = fig.axes[0]
+        seen["outlined"] = sorted(round(p.get_x() + 0.5) for p in ax.patches
+                                  if isinstance(p, Rectangle) and not p.get_fill() and p.get_edgecolor()[:3] == (0, 0, 0))
+        seen["texts"] = sorted(t.get_text() for t in ax.texts)
+        return []
+
+    monkeypatch.setattr("scripts.figure_layout.save_checked", spy)
+    rm.plot_heatmap(table, tmp_path / "t.png", window="F", cells=["k000_ie_a0"],
+                    estimators=["persistence", "ekf", "ekf_aug", "eks_aug"])
+    assert seen["outlined"] == [2, 3]
+    assert "\u22120.004" in seen["texts"] and "0.00" in seen["texts"]
+    assert rm.skill_text(-0.0001) == "0.00" and rm.skill_text(-0.25) == "\u22120.25"
