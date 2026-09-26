@@ -107,6 +107,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--heat-models", nargs="+", default=list(SEEDED))
     parser.add_argument("--table-models", nargs="+", default=list(TABLE_MODELS))
     parser.add_argument("--heat-sigma", type=float, default=HEAT_SIGMA)
+    parser.add_argument("--trackb-row", choices=("mean-of-medians", "median-of-means"), default="mean-of-medians",
+                        help="'Track B mean' row: v1.0 mean of the per-component medians (default), or the median "
+                             "over seeds of each seed's Track B mean, the primary metric of the v1.1 regime table")
     parser.add_argument("--no-figures", action="store_true")
     return parser.parse_args(argv)
 
@@ -121,6 +124,8 @@ def main(argv: list[str] | None = None) -> None:
     components: tuple[str, ...] | None = None
     table: dict[str, dict[str, dict[str, float]]] = {}
     heat: dict[str, np.ndarray] = {}
+    seed_means: dict[str, dict[str, list[float]]] = {}
+    track_b_names = unobserved_components()
     for sigma in args.sigmas:
         hold, fixed = truth_for(sigma, Path(args.data_dir), args.window)
         truth = hold.truth_reactor
@@ -134,6 +139,8 @@ def main(argv: list[str] | None = None) -> None:
                 m = state_metrics(truth[:n], pred[:n])
                 components = m.components
                 per_comp.append(m.nrmse)
+                seed_means.setdefault(model, {}).setdefault(tag(sigma), []).append(
+                    float(np.nanmean(m.nrmse[[components.index(c) for c in track_b_names]])))
                 per_tank.append(per_tank_nrmse(truth[:n], pred[:n], spread=fixed))
             if not per_comp:
                 continue
@@ -160,9 +167,14 @@ def main(argv: list[str] | None = None) -> None:
         best = learned[int(np.nanargmin([vals[i] for i in learned]))] if learned else -1
         cells = ["\\textbf{%.3f}" % v if i == best else "%.3f" % v for i, v in enumerate(vals)]
         lines.append("%s & %s \\\\" % (LABELS[c], " & ".join(cells)))
-    pooled = [float(np.nanmean([table[m][key][c] for c in track_b])) for m in cols]
+    if args.trackb_row == "median-of-means":
+        pooled = [float(np.median(seed_means[m][key])) for m in cols]
+        row_name = "Track~B (median over seeds)"
+    else:
+        pooled = [float(np.nanmean([table[m][key][c] for c in track_b])) for m in cols]
+        row_name = "Track~B mean"
     lines.append("\\midrule")
-    lines.append("Track~B mean & %s \\\\" % " & ".join("%.3f" % v for v in pooled))
+    lines.append("%s & %s \\\\" % (row_name, " & ".join("%.3f" % v for v in pooled)))
     (out_dir / ("component_table%s.tex" % args.tag)).write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
     if args.no_figures:
