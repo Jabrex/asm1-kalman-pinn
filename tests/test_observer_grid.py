@@ -92,5 +92,9 @@ def test_baseline_jobs_cover_each_cell_once():
     jobs = og.baseline_jobs("grid", files)
     outs = [a[a.index("--out") + 1] for a in jobs]
     assert len(outs) == len(set(outs)) == 60 + 3 + 2 + 4
+    # random truths have observations at the registered sigma only
+    for argv in jobs:
+        rand = "raw_rand" in argv[argv.index("--data-dir") + 1]
+        assert (argv[-2:] == ["--sigmas", "0.10"]) == rand, argv
     with pytest.raises(ValueError):
         og.grid("grid", realistic="k075", augment=KIN)

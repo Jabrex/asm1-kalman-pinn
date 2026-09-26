@@ -51,6 +51,25 @@ def test_default_invocation_is_bit_identical_including_openloop(tmp_path, monkey
     _assert_same_arrays(tmp_path, ref, "odesim")
 
 
+def test_dry_only_data_dir_writes_rows_without_rain(tmp_path, monkeypatch):
+    """Random truths (results/raw_rand/<i>) hold the dry scenario at sigma 0.10 only."""
+    src = REPO / "results" / "raw_rand" / "00"
+    if not (src / "sim_dry.npz").exists():
+        pytest.skip("needs results/raw_rand/00")
+    monkeypatch.chdir(REPO)
+    data = tmp_path / "raw"
+    data.mkdir()
+    for name in ("sim_dry.npz", "obs_dry_sigma0p10.npz"):
+        (data / name).write_bytes((src / name).read_bytes())
+    out = tmp_path / "rows"
+    make_baselines.main(["--data-dir", str(data), "--out", str(out), "--ras-filter-window", "4",
+                         "--rows", "persistence", "ode_openloop_reduced", "--sigmas", "0.10"])
+    for row in ("persistence", "ode_openloop_reduced"):
+        with np.load(out / ("%s_sigma0p10" % row) / "predictions.npz") as p:
+            assert sorted(p.files) == ["holdout", "train"], row
+            assert np.isfinite(p["train"]).all() and p["train"].shape[1:] == (5, 14), row
+
+
 def test_anchor_file_replaces_the_truth_start(tmp_path, monkeypatch):
     _require_v10("persistence")
     monkeypatch.chdir(REPO)

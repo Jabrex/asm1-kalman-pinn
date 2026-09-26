@@ -396,8 +396,11 @@ def baseline_jobs(stage: str, files: dict[str, dict]) -> list[list[str]]:
         return [_baseline_argv(files["numerics/k100_ic_as"], NUMERICS_BASELINE_ROOT, ("persistence",))]
     seen: dict[str, list[str]] = {}
     for key, cfg in sorted(files.items()):
-        if key.split("/")[1] in ("main", "m0prime", "sigma_log", "random") and cfg["cell"] not in seen:
-            seen[cfg["cell"]] = _baseline_argv(cfg, BASELINE_ROOT, BASELINE_ROWS)
+        family = key.split("/")[1]
+        if family in ("main", "m0prime", "sigma_log", "random") and cfg["cell"] not in seen:
+            argv = _baseline_argv(cfg, BASELINE_ROOT, BASELINE_ROWS)
+            # the random truths hold observations at the registered sigma only
+            seen[cfg["cell"]] = argv + ["--sigmas", "%.2f" % SIGMA] if family == "random" else argv
     return list(seen.values())
 
 

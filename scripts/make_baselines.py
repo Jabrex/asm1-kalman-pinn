@@ -130,7 +130,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     raw, out, plant = args.data_dir, args.out, Bsm1Plant()
-    dry, rain = scenario_arrays(raw, "dry"), scenario_arrays(raw, "rain")
+    dry = scenario_arrays(raw, "dry")
+    # The random truths (results/raw_rand/<i>) hold the dry scenario only; their rows carry no rain key.
+    rain = scenario_arrays(raw, "rain") if (raw / "sim_rain.npz").exists() else None
+    scenarios = {"dry": dry, **({"rain": rain} if rain is not None else {})}
     anchor = load_anchor(args.anchor_file)
     if anchor is not None and "odesim" in args.rows:
         parser.error("odesim is the v1.0 truth-start row; with --anchor-file use ode_openloop_full")
@@ -138,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("ode_openloop_full needs the anchor's settler_init; refusing to borrow truth")
     z0 = dry["reactor"][0] if anchor is None else anchor["z0_mean"]
     views = {k: apply_influent_knowledge(d["t"], d["q_in"], d["influent"], args.influent_mode, vault())
-             for k, d in (("dry", dry), ("rain", rain))}
+             for k, d in scenarios.items()}
     extra = {"data_dir": raw.as_posix(),
              "anchor_file": None if anchor is None else args.anchor_file.as_posix(),
              "anchor": "truth_y0" if anchor is None else anchor["meta"].get("name"),
@@ -150,19 +153,19 @@ def main(argv: list[str] | None = None) -> int:
     started = time.perf_counter()
     if "persistence" in args.rows:
         p = {**{k: np.tile(z0, (len(v), 1, 1)) for k, v in split_windows(dry["t"], dry["reactor"]).items()},
-             "rain": np.tile(z0, (len(rain["t"]), 1, 1))}
+             **({"rain": np.tile(z0, (len(rain["t"]), 1, 1))} if rain is not None else {})}
         rows["persistence"], seconds["persistence"] = {s: p for s in args.sigmas}, 0.0
     if "odesim" in args.rows:
         started = time.perf_counter()
         o = {**split_windows(dry["t"], integrate_open_loop(plant, dry)),
-             "rain": integrate_open_loop(plant, rain)}
+             **({"rain": integrate_open_loop(plant, rain)} if rain is not None else {})}
         rows["odesim"], seconds["odesim"] = {s: o for s in args.sigmas}, time.perf_counter() - started
     if "ode_openloop_full" in args.rows:
         y0 = (dry["y"][0] if anchor is None else np.asarray(anchor["settler_init"], float)).copy()
         y0[plant.idx.reactor] = np.asarray(z0, float).reshape(-1)
         started = time.perf_counter()
         f = {**split_windows(dry["t"], integrate_open_loop(plant, dry, y0, views["dry"])),
-             "rain": integrate_open_loop(plant, rain, y0, views["rain"])}
+             **({"rain": integrate_open_loop(plant, rain, y0, views["rain"])} if rain is not None else {})}
         rows["ode_openloop_full"] = {s: f for s in args.sigmas}
         seconds["ode_openloop_full"] = time.perf_counter() - started
     if "ode_openloop_reduced" in args.rows:
@@ -171,8 +174,9 @@ def main(argv: list[str] | None = None) -> int:
         for s in args.sigmas:
             traj = {k: reduced.integrate_bdf(z0, d["t"], d["q_in"], views[k],
                                              ras_series(raw, k, s, args.ras_filter_window))
-                    for k, d in (("dry", dry), ("rain", rain))}
-            rows["ode_openloop_reduced"][s] = {**split_windows(dry["t"], traj["dry"]), "rain": traj["rain"]}
+                    for k, d in scenarios.items()}
+            rows["ode_openloop_reduced"][s] = {**split_windows(dry["t"], traj["dry"]),
+                                               **({"rain": traj["rain"]} if "rain" in traj else {})}
         seconds["ode_openloop_reduced"] = (time.perf_counter() - started) / len(args.sigmas)
 
     from src.eval.metrics import state_metrics, track_summary  # noqa: E402
