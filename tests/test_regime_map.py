@@ -112,7 +112,9 @@ def test_score_end_to_end(v11_tree):
     win = {(w["cell"], w["window"]): w["estimator"] for w in result["table"]["winners"] if w["sigma"] == 0.1}
     assert win[("k000_ie_a0", "F")] == "ode_openloop_reduced"
     spread = [s for s in result["table"]["realisation_spread"] if s["estimator"] == "eks" and s["window"] == "F"]
-    assert spread and spread[0]["n"] == 2
+    # Sections 2 and 9: realisations 1-9 next to realisation 0, never pooled (the fixture has r01 only)
+    assert spread and spread[0]["n"] == 1 and spread[0]["realisations"] == [1]
+    assert spread[0]["realisation0"] == get[("eks", "F")]["median"]
     rec = result["table"]["parameter_recovery"]
     assert rec[0]["estimator"] == "cl_pinn_theta" and rec[0]["true_log_ratio"] == {"bA": 0.0, "muA": 0.0}
     assert rec[0]["estimates"][0]["log_multiplier"]["muA"] == pytest.approx(math.log(1.1))
@@ -160,7 +162,7 @@ def test_single_valued_comparator_and_multi_seed_lstm():
     assert rm.compare_rows(p, _prow("eks", [0], [0.3], family="observers")) == ("win", "every seed against one value")
     assert rm.compare_rows(p, _prow("eks", [0], [0.22], family="observers"))[0] == "tie"
     lstm = _prow("lstm", [0, 1, 2], [0.24, 0.5, 0.6])
-    assert rm.compare_rows(p, lstm) == ("tie", "every seed against every seed")
+    assert rm.compare_rows(p, lstm) == ("tie", rm.ADDED_RULE)
     assert rm.single_outcome(0.2, 0.2) == "tie" and rm.single_outcome(0.1, 0.2) == "win"
 
 
@@ -229,7 +231,8 @@ def test_hypotheses_are_evaluated_with_the_registered_rules(v11_tree):
     assert hyp["H7"]["rule"] == "paired seeds" and hyp["H7"]["status"] in ("supported", "not supported")
     assert hyp["H1"]["cells"]["k000_ie_a0"]["outcome"] in ("win", "tie", "loss")
     assert hyp["H1"]["cells"]["k000_ic_a0"]["outcome"] == "missing"
-    assert hyp["H3"]["status"] == "not supported"  # no K1 cells in this tree
+    assert hyp["H3"]["status"] == "not decided"  # no K1 cells in this tree: missing, not a loss
+    assert hyp["H4"]["status"] == "not decided"
     assert hyp["H3"]["k0_theta_sanity"]["multipliers"] == {0: {"muA": 1.1, "bA": 0.9}}
     assert hyp["H3"]["k0_theta_sanity"]["pass"] is True
 
@@ -249,3 +252,84 @@ def test_heatmaps_are_written(v11_tree):
             "figS_regime_map_all_cells.pdf"} <= names
     assert rm.cell_label("k050_ic_al1") == "K.5 Ic Al1"
     assert rm.cell_label("k025_ie_a0") == "K.25 Ie A0"
+
+
+# -- review fixes (independent G7 review, 2026-09-26) -------------------------------------------------
+def test_more_information_rows_are_references_never_winners():
+    p = _prow("cl_pinn", [0, 1, 2], [0.1, 0.1, 0.1])
+    full = _prow("ode_openloop_full", [0], [0.001], family="baselines")
+    online_frozen = _prow("ekf_online_frozenq", [0], [0.001], family="observers")
+    assert rm.compare_rows(p, full) == ("reference", rm.REFERENCE_RULE)
+    assert rm.compare_rows(p, online_frozen)[0] == "reference"
+    rows = [dict(p, median=0.1, primary=True), dict(full, median=0.001, primary=rm.is_primary("ode_openloop_full"))]
+    comps = rm.comparisons(rows)
+    assert comps[0]["outcome"] == "reference" and comps[0]["reference_outcome"] == "loss"
+    assert rm.comparison_kind(comps[0]) == "reference" and not comps[0]["decides_hypotheses"]
+    assert not rm.is_primary("ekf_online_frozenq")
+
+
+def test_labelled_and_added_rule_comparisons_do_not_decide():
+    rows = [dict(_prow("cl_pinn", [0, 1], [0.1, 0.2]), median=0.15, primary=True),
+            dict(_prow("eks", [0], [0.3], family="observers"), median=0.3, primary=True),
+            dict(_prow("lstm", [0, 1, 2], [0.4, 0.5, 0.6]), median=0.5, primary=True)]
+    kinds = {c["comparator"]: rm.comparison_kind(c) for c in rm.comparisons(rows) if c["pinn"] == "cl_pinn"}
+    assert kinds == {"eks": "labelled", "lstm": "labelled"}
+
+
+def test_winners_carry_the_seed_label():
+    rows = [dict(_prow("cl_pinn", [0, 1], [0.1, 0.2]), median=0.15, primary=True),
+            dict(_prow("eks", [0], [0.3], family="observers"), median=0.3, primary=True)]
+    w = rm.winners(rows)[0]
+    assert (w["estimator"], w["n"], w["label"]) == ("cl_pinn", 2, "two-seed")
+
+
+def test_crossover_finds_a_later_negative_to_positive_change():
+    assert rm.crossover_alpha([(0.0, 0.1), (0.5, -0.1), (1.0, 0.1)]) == (pytest.approx(0.75), "crosses")
+    assert rm.crossover_alpha([(0.0, 0.1), (0.5, -0.1), (1.0, -0.2)]) == (None, "no_negative_to_positive_change")
+
+
+def test_lab_seed_spread_sits_next_to_the_registered_seed():
+    def row(cell, extra, med):
+        return {"cell": cell, "extra": extra, "sigma": 0.1, "estimator": "eks", "window": "R0", "median": med}
+
+    rows = [row("k050_ic_al1", "", 0.5)] + [row("k050_ic_al1_lab%02d" % i, "lab%02d" % i, 0.4 + 0.01 * i)
+                                           for i in range(1, 10)]
+    spread = rm.lab_seed_spread(rows)
+    assert len(spread) == 1 and spread[0]["n"] == 9 and spread[0]["cell"] == "k050_ic_al1"
+    assert spread[0]["registered_seed_value"] == 0.5 and spread[0]["registered_seed_outside_range"] is True
+    assert spread[0]["median"] == pytest.approx(0.45)
+
+
+def test_parameter_recovery_reports_the_registered_absolute_log_error(v11_tree):
+    rec = rm.score(v11_tree, RES / "runs", "track_b_nrmse_fixed")["table"]["parameter_recovery"][0]
+    assert rec["estimates"][0]["abs_log_error"]["muA"] == pytest.approx(abs(math.log(1.1)))
+    assert rec["median_abs_log_error"]["bA"] == pytest.approx(abs(math.log(0.9)))
+
+
+def test_failed_run_parsing_reads_realisations_and_skips_crash_attempts(tmp_path):
+    obs = tmp_path / "observers" / "k000_ie_a0" / "ekf_sigma0p10_r03"
+    obs.mkdir(parents=True)
+    (obs / "error.txt").write_text("boom", encoding="utf-8")
+    crash = tmp_path / "pinn" / "k000_ie_a0_seed1" / "cl_pinn_sigma0p10__crash1"
+    crash.mkdir(parents=True)
+    (crash / "error.txt").write_text("CUDA error", encoding="utf-8")
+    failed = rm.failed_runs(tmp_path)
+    assert [(f["estimator"], f["realisation"], f["cell"]) for f in failed] == [("ekf", 3, "k000_ie_a0")]
+    assert rm.infrastructure_crashes(tmp_path) == [str(crash).replace("\\", "/")]
+
+
+def test_a_failed_observer_job_stops_the_scoring(v11_tree):
+    (v11_tree / "observers" / "k000_ie_a0" / "error_k000_ie_a0_sigma0p10_r00_tuned.txt").write_text(
+        "LinAlgError", encoding="utf-8")
+    with pytest.raises(ValueError, match="failed observer jobs"):
+        rm.score(v11_tree, RES / "runs", "track_b_nrmse_fixed")
+
+
+def test_h7_is_not_decided_when_the_comparator_failed(v11_tree):
+    failed = v11_tree / "pinn" / "k000_ie_a0_seed0" / "pinn_sigma0p10"
+    shutil.rmtree(failed)
+    failed.mkdir()
+    (failed / "error.txt").write_text("NaN loss", encoding="utf-8")
+    hyp = rm.score(v11_tree, RES / "runs", "track_b_nrmse_fixed")["table"]["hypotheses"]
+    assert hyp["H7"]["outcome"] == "not_decided" and hyp["H7"]["status"] == "not decided"
+    assert hyp["H7"]["consequence"] == "curriculum claim withdrawn in full"

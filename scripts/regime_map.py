@@ -196,7 +196,7 @@ def base_model(label: str) -> str:
 
 def is_primary(label: str) -> bool:
     """Information-matched headline rows (no variant, no frozen q, not more-information)."""
-    return "[" not in label and not label.endswith("_frozenq") and label not in MORE_INFORMATION
+    return "[" not in label and not label.endswith("_frozenq") and base_model(label) not in MORE_INFORMATION
 
 
 def divergence(summary: dict[str, Any]) -> str | None:
@@ -291,6 +291,19 @@ def discover(root: Path, legacy_lstm: Path | None = None) -> list[RunRef]:
     return refs
 
 
+def infrastructure_crashes(root: Path) -> list[str]:
+    """run_core keeps a crashed attempt as <run_id>__crash<N>; it is rerun, not a failed run (Section 11)."""
+    return sorted(str(p).replace("\\", "/") for family in FAMILIES
+                  for p in (Path(root) / family).glob("*/*__crash*") if p.is_dir())
+
+
+def observer_job_errors(root: Path) -> list[str]:
+    """Failed observer jobs: scripts/run_observers.py writes error_<cell>_sigma<tag>_rNN_<q_mode>.txt."""
+    base = Path(root) / "observers"
+    return sorted(str(p).replace("\\", "/") for pattern in ("error_*.txt", "*/error_*.txt")
+                  for p in base.glob(pattern)) if base.exists() else []
+
+
 def failed_runs(root: Path) -> list[dict[str, Any]]:
     """Run directories with an error.txt and no scored output (they lose to every comparator)."""
     out = []
@@ -300,6 +313,8 @@ def failed_runs(root: Path) -> list[dict[str, Any]]:
             continue
         for error in sorted(base.glob("*/*/error.txt")):
             run_dir = error.parent
+            if "__crash" in run_dir.name:
+                continue  # an infrastructure attempt that was rerun (infrastructure_crashes)
             if (run_dir / "summary.json").exists() and (run_dir / "predictions.npz").exists():
                 continue
             info, seed = parse_cell(run_dir.parent.name)
@@ -307,10 +322,8 @@ def failed_runs(root: Path) -> list[dict[str, Any]]:
             if m is None:
                 raise ValueError("%s: cannot read sigma from the run directory name" % run_dir)
             model = run_dir.name[: m.start()]
-            variant = run_dir.name[m.end():].lstrip("_")
-            r = REALISATION.search(variant)
-            if r:
-                variant = variant[: r.start()]
+            r = REALISATION.search(run_dir.name)
+            variant = run_dir.name[m.end(): r.start() if r else None].lstrip("_")
             if family == "pinn" and variant:
                 info, _ = parse_cell("%s_%s" % (info["cell"], variant))
             out.append({"family": family, "info": info, "cell": info["cell"], "estimator": model,
@@ -536,8 +549,11 @@ def seed_label(r: dict[str, Any]) -> str:
     return "one-seed" if r["n"] == 1 else "two-seed"
 
 
-def compare_rows(p: dict[str, Any], other: dict[str, Any]) -> tuple[str, str]:
-    """(outcome, rule) of row p against row other under the Section 9 rules."""
+ADDED_RULE = "added rule (not registered): every seed against every seed"
+REFERENCE_RULE = "comparator uses more information: shown for reference, never a winner"
+
+
+def _compare_core(p: dict[str, Any], other: dict[str, Any]) -> tuple[str, str]:
     if other["failed"] or other["diverged"]:
         return "not_decided", "comparator diverged or failed"
     if is_pinn_row(p) and is_pinn_row(other):
@@ -547,7 +563,19 @@ def compare_rows(p: dict[str, Any], other: dict[str, Any]) -> tuple[str, str]:
         if p["n"] == 1:
             return single_outcome(p["decision_values"][0], other["decision_values"][0]), "single values"
         return outcome(p["decision_values"], other["decision_values"]), "every seed against one value"
-    return outcome(p["decision_values"], other["decision_values"]), "every seed against every seed"
+    # Section 9 covers single-valued rows and two PINN models; the multi-seed LSTM is not covered.
+    return outcome(p["decision_values"], other["decision_values"]), ADDED_RULE
+
+
+def compare_rows(p: dict[str, Any], other: dict[str, Any]) -> tuple[str, str]:
+    """(outcome, rule) of row p against row other under the Section 9 rules.
+
+    Against a more-information row (ode_openloop_full, the online EKF) the outcome is
+    'reference': Section 9 shows those rows for reference and they never win.
+    """
+    if base_model(other["estimator"]) in MORE_INFORMATION:
+        return "reference", REFERENCE_RULE
+    return _compare_core(p, other)
 
 
 def comparisons(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -564,14 +592,24 @@ def comparisons(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     continue
                 result, rule = compare_rows(p, other)
                 labels = sorted({x for x in (seed_label(p), seed_label(other)) if x})
-                out.append({
+                entry = {
                     "cell": cell, "sigma": sigma, "window": window,
                     "pinn": p["estimator"], "comparator": other["estimator"],
                     "outcome": result, "rule": rule, "label": ", ".join(labels),
-                    "decides_hypotheses": not labels,
+                    "decides_hypotheses": not labels and result != "reference" and rule != ADDED_RULE,
                     "pinn_values": p["values"], "comparator_values": other["values"],
-                })
+                }
+                if result == "reference":
+                    entry["reference_outcome"] = _compare_core(p, other)[0]
+                out.append(entry)
     return out
+
+
+def comparison_kind(c: dict[str, Any]) -> str:
+    """'deciding', 'labelled' (seed label or added rule) or 'reference' (more-information comparator)."""
+    if c["outcome"] == "reference":
+        return "reference"
+    return "deciding" if c["decides_hypotheses"] else "labelled"
 
 
 def winners(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -587,7 +625,8 @@ def winners(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         best = min(eligible, key=lambda r: r["median"])
         tied = [r["estimator"] for r in eligible if r is not best and r["median"] == best["median"]]
         out.append({"cell": cell, "sigma": sigma, "window": window,
-                    "estimator": best["estimator"], "median": best["median"], "tied_with": tied})
+                    "estimator": best["estimator"], "median": best["median"], "tied_with": tied,
+                    "n": best["n"], "label": seed_label(best)})
     return out
 
 
@@ -596,12 +635,14 @@ def crossover_alpha(points: list[tuple[float, float]]) -> tuple[float | None, st
     if not points:
         return None, "no_data"
     points = sorted(points)
-    if points[0][1] > 0:
-        return None, "behind_at_first_alpha"
     for (a0, d0), (a1, d1) in zip(points, points[1:]):
         if d0 <= 0 < d1:
             return a0 + (a1 - a0) * (-d0) / (d1 - d0), "crosses"
-    return None, "never_behind"
+    if all(d > 0 for _, d in points):
+        return None, "behind_at_first_alpha"
+    if all(d <= 0 for _, d in points):
+        return None, "never_behind"
+    return None, "no_negative_to_positive_change"
 
 
 def crossovers(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -649,12 +690,19 @@ def parameter_recovery(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         truth = _meta_parameters(Path(members[0]["data_dir"]))
         true_log = {n: (math.log(float(truth[n]) / float(base[n]))
                         if float(truth[n]) > 0 and float(base[n]) > 0 else None) for n in names}
+        estimates = []
+        for m in sorted(members, key=lambda r: r["seed"]):
+            logm = {n: math.log(float(m["learned_multipliers"][n])) for n in names}
+            estimates.append({"seed": m["seed"], "log_multiplier": logm,
+                              # Section 3, H3: |ln(multiplier) - ln(truth / vault)| per name (secondary)
+                              "abs_log_error": {n: abs(logm[n] - true_log[n]) if true_log[n] is not None else None
+                                                for n in names}})
+        median_err = {n: float(np.median([e["abs_log_error"][n] for e in estimates]))
+                      if true_log[n] is not None else None for n in names}
         out.append({
             "cell": cell, "sigma": sigma, "estimator": estimator, "names": names,
-            "true_log_ratio": true_log,
-            "estimates": [{"seed": m["seed"],
-                           "log_multiplier": {n: math.log(float(m["learned_multipliers"][n])) for n in names}}
-                          for m in sorted(members, key=lambda r: r["seed"])],
+            "true_log_ratio": true_log, "estimates": estimates, "n": len(estimates),
+            "median_abs_log_error": median_err,
         })
     return out
 
@@ -666,13 +714,48 @@ def realisation_spread(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             groups.setdefault((r["cell"], r["sigma"], r["estimator"], r["window"]), []).append(r)
     out = []
     for (cell, sigma, estimator, window), members in sorted(groups.items()):
-        if max(m["realisation"] for m in members) == 0:
+        extra = sorted((m for m in members if m["realisation"] > 0), key=lambda r: r["realisation"])
+        if not extra:
             continue
-        values = np.array([m["value"] for m in sorted(members, key=lambda r: r["realisation"])])
+        # Sections 2 and 9: the spread over realisations 1-9 sits next to realisation 0, never pooled with it.
+        values = np.array([m["value"] for m in extra])
+        r0 = [m["value"] for m in members if m["realisation"] == 0]
+        r0_value = r0[0] if r0 else None
         out.append({"cell": cell, "sigma": sigma, "estimator": estimator, "window": window,
+                    "realisations": [m["realisation"] for m in extra],
                     "n": int(values.size), "median": float(np.median(values)),
                     "min": float(values.min()), "max": float(values.max()),
-                    "p25": float(np.percentile(values, 25)), "p75": float(np.percentile(values, 75))})
+                    "p25": float(np.percentile(values, 25)), "p75": float(np.percentile(values, 75)),
+                    "realisation0": r0_value,
+                    "realisation0_outside_range": None if r0_value is None
+                    else bool(r0_value < values.min() or r0_value > values.max())})
+    return out
+
+
+LAB_EXTRA = re.compile(r"^lab\d+$")
+
+
+def lab_seed_spread(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Section 2: the nine further laboratory seeds, next to the seed-20260923 cell and never pooled with it."""
+    index = {(r["cell"], r["sigma"], r["estimator"], r["window"]): r for r in rows}
+    groups: dict[tuple, list[dict[str, Any]]] = {}
+    for r in rows:
+        if r["extra"] and LAB_EXTRA.match(r["extra"]):
+            base = r["cell"][: -len(r["extra"]) - 1]
+            groups.setdefault((base, r["sigma"], r["estimator"], r["window"]), []).append(r)
+    out = []
+    for (base, sigma, estimator, window), members in sorted(groups.items()):
+        members = sorted(members, key=lambda r: r["extra"])
+        values = np.array([m["median"] for m in members])
+        ref = index.get((base, sigma, estimator, window))
+        ref_value = ref["median"] if ref else None
+        out.append({"cell": base, "sigma": sigma, "estimator": estimator, "window": window,
+                    "lab_seeds": [m["extra"] for m in members], "n": int(values.size),
+                    "median": float(np.median(values)), "min": float(values.min()), "max": float(values.max()),
+                    "p25": float(np.percentile(values, 25)), "p75": float(np.percentile(values, 75)),
+                    "registered_seed_value": ref_value,
+                    "registered_seed_outside_range": None if ref_value is None
+                    else bool(ref_value < values.min() or ref_value > values.max())})
     return out
 
 
@@ -728,7 +811,9 @@ def hypotheses(rows: list[dict[str, Any]], crossover_rows: list[dict[str, Any]],
         v["status"] = {"loss": "supported", "win": "refuted", "tie": "undecided"}.get(v["outcome"], "not decided")
         h1[cell] = v
     statuses = {v["status"] for v in h1.values()}
-    out["H1"] = {"cells": h1, "status": statuses.pop() if len(statuses) == 1 else "mixed",
+    # Section 3 gives H1 a word per cell; a single word is reported only when both cells agree.
+    out["H1"] = {"cells": h1, "status": statuses.pop() if len(statuses) == 1 else "differs by cell",
+                 "status_basis": "per cell (Section 3); one word only when the cells agree",
                  "summary": "; ".join("%s: CL-PINN vs EKS %s (%s)" % (c, v["outcome"], v["status"])
                                       for c, v in h1.items())}
     # H2: information-matched open loop falls behind persistence between alpha 0.25 and 0.75.
@@ -754,10 +839,16 @@ def hypotheses(rows: list[dict[str, Any]], crossover_rows: list[dict[str, Any]],
             mults[rec_seed] = comps
         inside = all(THETA_SANITY[0] <= m <= THETA_SANITY[1] for comps in mults.values() for m in comps.values())
         sanity = {"multipliers": mults, "range": list(THETA_SANITY), "pass": bool(mults) and inside}
-    ok = aug["outcome"] == "win" and theta["outcome"] == "win"
+    if aug["outcome"] in ("not_decided", "missing") or theta["outcome"] in ("not_decided", "missing"):
+        status3 = "not decided"
+    else:
+        status3 = "supported" if aug["outcome"] == "win" and theta["outcome"] == "win" else "not supported"
     out["H3"] = {"augmented_vs_plain_smoother": aug, "pinn_theta_vs_cl_pinn": theta,
                  "pinn_theta_vs_augmented_smoother_expected_tie": tie, "k0_theta_sanity": sanity,
-                 "status": "supported" if ok else "not supported",
+                 "expected_tie_outcome": tie["outcome"], "expected_tie_met": tie["outcome"] == "tie",
+                 "status_basis": "the two registered wins (Aug. EKS over EKS, PINN-theta over CL-PINN); the "
+                                 "expected tie of PINN-theta and Aug. EKS is reported beside it",
+                 "status": status3,
                  "summary": "Aug. EKS vs EKS %s; PINN-theta vs CL-PINN %s; PINN-theta vs Aug. EKS %s (expected tie)"
                             % (aug["outcome"], theta["outcome"], tie["outcome"])}
     # H4: the laboratory panel at K.5-Ic (or K1-Ic before gate D3) helps both families.
@@ -778,7 +869,7 @@ def hypotheses(rows: list[dict[str, Any]], crossover_rows: list[dict[str, Any]],
             fam[est] = v
         lab_wins = all(fam[e]["outcome"] == "win" for e in fam)
         rhos = [fam[e].get("spearman_tau_vs_reduction") for e in fam]
-        if any(r is None or not np.isfinite(r) for r in rhos):
+        if any(fam[e]["outcome"] in ("not_decided", "missing") for e in fam) or any(r is None or not np.isfinite(r) for r in rhos):
             status = "not decided"
         else:
             status = "supported" if lab_wins and all(r > 0 for r in rhos) else "not supported"
@@ -792,7 +883,11 @@ def hypotheses(rows: list[dict[str, Any]], crossover_rows: list[dict[str, Any]],
                                           for e in fam)}
     # H5: composite influent costs more for forcing-slaved states than for biomass inventories.
     fam5 = {}
+    undecided5 = []
     ie, ic = _find(rows, "k000_ie_a0", "eks"), _find(rows, "k000_ic_a0", "eks")
+    for r in (ie, ic, _find(rows, "k000_ie_a0", "cl_pinn"), _find(rows, "k000_ic_a0", "cl_pinn")):
+        if r is not None and (r["failed"] or r["diverged"]):
+            undecided5.append("%s %s diverged or failed" % (r["cell"], r["estimator"]))
     if ie is not None and ic is not None:
         a = _group_ratio(ic["per_component_fixed"], ie["per_component_fixed"], FORCING_COMPONENTS)
         b = _group_ratio(ic["per_component_fixed"], ie["per_component_fixed"], BIOMASS_COMPONENTS)
@@ -809,7 +904,9 @@ def hypotheses(rows: list[dict[str, Any]], crossover_rows: list[dict[str, Any]],
             a = float(np.median([v["ratio_forcing"] for v in per_pair.values()]))
             b = float(np.median([v["ratio_biomass"] for v in per_pair.values()]))
             fam5["cl_pinn"] = {"per_seed_pair": per_pair, "ratio_forcing": a, "ratio_biomass": b, "holds": bool(a > b)}
-    if len(fam5) < 2:
+    if any(not (np.isfinite(v["ratio_forcing"]) and np.isfinite(v["ratio_biomass"])) for v in fam5.values()):
+        undecided5.append("non-finite ratio")
+    if len(fam5) < 2 or undecided5:
         status5 = "not decided"
     else:
         status5 = "supported" if all(v["holds"] for v in fam5.values()) else "not supported"
@@ -817,12 +914,14 @@ def hypotheses(rows: list[dict[str, Any]], crossover_rows: list[dict[str, Any]],
                  "biomass_components": list(BIOMASS_COMPONENTS),
                  "ratio": "mean over the group of NRMSE(Ic) / NRMSE(Ie) per component, K0-A0; CL-PINN: per seed "
                           "pair, then the median over the pairs",
-                 "status": status5,
+                 "status": status5, "not_decided_because": undecided5,
                  "summary": "; ".join("%s: forcing %.3g vs biomass %.3g" % (e, v["ratio_forcing"], v["ratio_biomass"])
                                       for e, v in fam5.items())}
     # H7: the CL-PINN beats the single-stage PINN at K0-Ie-A0 (seed-paired).
     v7 = _versus(_find(rows, "k000_ie_a0", "cl_pinn"), _find(rows, "k000_ie_a0", "pinn"))
-    out["H7"] = {**v7, "status": "supported" if v7["outcome"] == "win" else "not supported",
+    status7 = "supported" if v7["outcome"] == "win" else (
+        "not decided" if v7["outcome"] in ("not_decided", "missing") else "not supported")
+    out["H7"] = {**v7, "status": status7,
                  "consequence": "curriculum claim kept" if v7["outcome"] == "win"
                  else "curriculum claim withdrawn in full",
                  "summary": "CL-PINN vs PINN %s (%s)" % (v7["outcome"], v7["rule"])}
@@ -916,16 +1015,28 @@ def markdown(table: dict[str, Any]) -> str:
                     cells_txt.append("-" if r is None else "%s (%s)" % (_fmt(r["median"]), _fmt(r["skill"], "%+.2f")))
                 lines.append("| %s | %s |" % (c, " | ".join(cells_txt)))
             lines.append("")
-    counts: dict[tuple, dict[str, int]] = {}
-    for c in table["comparisons"]:
-        key = (c["window"], c["pinn"], c["comparator"])
-        counts.setdefault(key, {"win": 0, "tie": 0, "loss": 0, "not_decided": 0})[c["outcome"]] += 1
-    lines += ["## Win / tie / loss counts over cells and sigmas", "",
-              "| window | PINN estimator | comparator | win | tie | loss | not decided |",
-              "| --- | --- | --- | --- | --- | --- | --- |"]
-    for (window, pinn, comp), n in sorted(counts.items(), key=lambda kv: (WINDOWS.index(kv[0][0]), kv[0][1], kv[0][2])):
-        lines.append("| %s | %s | %s | %d | %d | %d | %d |"
-                     % (window, pinn, comp, n["win"], n["tie"], n["loss"], n["not_decided"]))
+    titles = {"deciding": "Win / tie / loss counts over cells (three-seed PINN rows, registered rules)",
+              "labelled": "Labelled comparisons (two-seed or one-seed PINN rows, or the added LSTM rule); they do "
+                          "not decide H1-H7",
+              "reference": "Against more-information rows (* ; outcome the rule would give, never a win for them)"}
+    for kind in ("deciding", "labelled", "reference"):
+        counts: dict[tuple, dict[str, int]] = {}
+        for c in table["comparisons"]:
+            if comparison_kind(c) != kind:
+                continue
+            result = c["reference_outcome"] if kind == "reference" else c["outcome"]
+            key = (c["window"], c["pinn"], c["comparator"])
+            counts.setdefault(key, {"win": 0, "tie": 0, "loss": 0, "not_decided": 0})[result] += 1
+        if not counts:
+            continue
+        lines += ["## %s" % titles[kind], "",
+                  "| window | PINN estimator | comparator | win | tie | loss | not decided |",
+                  "| --- | --- | --- | --- | --- | --- | --- |"]
+        for (window, pinn, comp), n in sorted(counts.items(),
+                                              key=lambda kv: (WINDOWS.index(kv[0][0]), kv[0][1], kv[0][2])):
+            lines.append("| %s | %s | %s | %d | %d | %d | %d |"
+                         % (window, pinn, comp, n["win"], n["tie"], n["loss"], n["not_decided"]))
+        lines.append("")
     lines += ["", "## Crossover alpha* (error rises above persistence)", "",
               "| influent | anchor | sigma | window | estimator | alpha* | status |",
               "| --- | --- | --- | --- | --- | --- | --- |"]
@@ -951,6 +1062,10 @@ def score(root: Path, legacy_lstm: Path | None, metric: str,
     refs = discover(root, legacy_lstm)
     if not refs:
         raise SystemExit("no scored runs under %s" % root)
+    job_errors = observer_job_errors(root)
+    if job_errors:
+        # A failed observer job leaves no run directory to score; refuse rather than drop it (Section 11).
+        raise ValueError("failed observer jobs must be reported, not dropped: %s" % ", ".join(job_errors))
     failed = failed_runs(root)
     records = score_refs(refs, metric) + failed_records(failed)
     rows = aggregate(records)
@@ -972,6 +1087,7 @@ def score(root: Path, legacy_lstm: Path | None, metric: str,
             "track_b": list(TRACK_B),
             "diverged_runs": [{"run_dir": d, "reason": why} for d, why in diverged],
             "failed_runs": failed,
+            "infrastructure_crashes": infrastructure_crashes(root),
             "realistic_k": realistic,
         },
         "rows": rows,
@@ -980,6 +1096,7 @@ def score(root: Path, legacy_lstm: Path | None, metric: str,
         "crossovers": crossing,
         "parameter_recovery": parameter_recovery(records),
         "realisation_spread": realisation_spread(records),
+        "lab_seed_spread": lab_seed_spread(rows),
         "hypotheses": hypotheses(rows, crossing, realistic, tau_components(rec_realistic),
                                  str(rec_realistic).replace("\\", "/") if rec_realistic else None),
     }
@@ -1069,12 +1186,16 @@ def plot_heatmap(table: dict[str, Any], png_path: Path, sigma: float = 0.10,
     image = None
     for ax, window in zip(axes[0], windows):
         grid = skill_matrix(table, window, sigma, cells, estimators)
+        rows_here = {(r["cell"], r["estimator"]): r for r in table["rows"]
+                     if r["window"] == window and abs(r["sigma"] - sigma) < 1e-9}
         image = ax.imshow(np.clip(grid, -1.0, 1.0), cmap="RdBu", norm=norm, aspect="auto")
         for i in range(len(cells)):
             if not compact:
                 for j in range(len(estimators)):
                     val = grid[i, j]
-                    ax.text(j, i, "n/a" if not np.isfinite(val) else "%.2f" % val, ha="center", va="center",
+                    row = rows_here.get((cells[i], estimators[j]))
+                    mark = "\u2020" if row is not None and seed_label(row) else ""
+                    ax.text(j, i, "n/a" if not np.isfinite(val) else "%.2f%s" % (val, mark), ha="center", va="center",
                             fontsize=6,
                             color="0.5" if not np.isfinite(val) else ("white" if abs(val) > 0.6 else "black"))
             best = win.get((cells[i], window))
@@ -1092,8 +1213,8 @@ def plot_heatmap(table: dict[str, Any], png_path: Path, sigma: float = 0.10,
     cbar.set_label("skill = 1 - E/E$_{persist}$", fontsize=7)
     marks = ", ".join("%s = best on %s" % ({"o": "dot", "s": "square", "^": "triangle"}[WINDOW_MARKER[w]], w)
                       for w in windows)
-    fig.supxlabel("Markers: %s. * = more information, never a winner. sigma = %.2f." % (marks, sigma),
-                  fontsize=6)
+    fig.supxlabel("Markers: %s. * = more information, never a winner. \u2020 = PINN row with one or two seeds "
+                  "(labelled, Section 9). sigma = %.2f." % (marks, sigma), fontsize=6)
     png_path = Path(png_path)
     png_path.parent.mkdir(parents=True, exist_ok=True)
     written = save_figure(fig, png_path)
