@@ -238,3 +238,14 @@ def test_h5_ratio_is_the_mean_of_per_component_ratios():
     num = {"a": 2.0, "b": 4.0}
     den = {"a": 1.0, "b": 1.0}
     assert rm._group_ratio(num, den, ("a", "b")) == pytest.approx(3.0)
+
+
+def test_heatmaps_are_written(v11_tree):
+    result = rm.score(v11_tree, RES / "runs", "track_b_nrmse_fixed")
+    rm.write_outputs(result, v11_tree)
+    written = rm.plot(v11_tree, 0.10, None)
+    names = {p.name for p in written}
+    assert {"fig6_regime_map.png", "fig6_regime_map.pdf", "graphical_abstract_regime.png",
+            "figS_regime_map_all_cells.pdf"} <= names
+    assert rm.cell_label("k050_ic_al1") == "K.5 Ic Al1"
+    assert rm.cell_label("k025_ie_a0") == "K.25 Ie A0"

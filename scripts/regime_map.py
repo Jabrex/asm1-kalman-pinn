@@ -1000,6 +1000,126 @@ def write_outputs(result: dict[str, Any], out_dir: Path) -> list[Path]:
     return paths
 
 
+# -- heatmap (Fig. 6 and the graphical-abstract panel) ----------------------------
+WINDOW_MARKER = {"R0": "o", "R2": "s", "F": "^"}
+
+
+def cell_label(cell: str) -> str:
+    info, _ = parse_cell(cell)
+    if info["rand"] is not None:
+        return "random truth %d" % info["rand"]
+    if info["k"] is None:
+        return cell
+    k = int(info["k"])
+    k_txt = "K0" if k == 0 else ("K1" if k == 100 else "K.%s" % ("%02d" % k).rstrip("0"))
+    parts = [k_txt + (" off-steady" if info["offsteady"] else ""), info["influent"].capitalize(),
+             info["anchor"].capitalize()]
+    if info["extra"]:
+        parts.append(info["extra"])
+    return " ".join(parts)
+
+
+def default_cells(table: dict[str, Any], sigma: float, pinn_only: bool = True) -> list[str]:
+    rows = [r for r in table["rows"] if abs(r["sigma"] - sigma) < 1e-9 and r["k"] is not None
+            and not r["extra"] and r["rand"] is None]
+    if pinn_only:
+        with_pinn = {r["cell"] for r in rows if r["family"] == "pinn"}
+        rows = [r for r in rows if r["cell"] in with_pinn]
+    return sorted({r["cell"] for r in rows}, key=lambda c: _cell_sort_key(parse_cell(c)[0]))
+
+
+def default_estimators(table: dict[str, Any], sigma: float, cells: list[str]) -> list[str]:
+    present = {r["estimator"] for r in table["rows"] if abs(r["sigma"] - sigma) < 1e-9 and r["cell"] in cells
+               and (r["primary"] or r["estimator"] in MORE_INFORMATION)}
+    return sorted(present, key=_estimator_sort_key)
+
+
+def skill_matrix(table: dict[str, Any], window: str, sigma: float, cells: list[str],
+                 estimators: list[str]) -> np.ndarray:
+    lookup = {(r["cell"], r["estimator"]): r for r in table["rows"]
+              if r["window"] == window and abs(r["sigma"] - sigma) < 1e-9}
+    out = np.full((len(cells), len(estimators)), np.nan)
+    for i, c in enumerate(cells):
+        for j, e in enumerate(estimators):
+            r = lookup.get((c, e))
+            if r is not None and r.get("skill") is not None:
+                out[i, j] = r["skill"]
+    return out
+
+
+def plot_heatmap(table: dict[str, Any], png_path: Path, sigma: float = 0.10,
+                 windows: tuple[str, ...] = ("R0", "F"), cells: list[str] | None = None,
+                 estimators: list[str] | None = None, compact: bool = False) -> list[Path]:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import TwoSlopeNorm
+
+    cells = cells or default_cells(table, sigma)
+    estimators = estimators or default_estimators(table, sigma, cells)
+    if not cells or not estimators:
+        raise ValueError("regime table has no grid rows at sigma = %.2f" % sigma)
+    win = {(w["cell"], w["window"]): w["estimator"] for w in table["winners"] if abs(w["sigma"] - sigma) < 1e-9}
+    width = min(7.2 if compact else 16.0, 2.2 + 0.62 * len(estimators) * len(windows))
+    height = 2.6 + 0.34 * len(cells)
+    fig, axes = plt.subplots(1, len(windows), figsize=(width, height), sharey=True, squeeze=False,
+                             layout="constrained")
+    norm = TwoSlopeNorm(vmin=-1.0, vcenter=0.0, vmax=1.0)
+    image = None
+    for ax, window in zip(axes[0], windows):
+        grid = skill_matrix(table, window, sigma, cells, estimators)
+        image = ax.imshow(np.clip(grid, -1.0, 1.0), cmap="RdBu", norm=norm, aspect="auto")
+        for i in range(len(cells)):
+            if not compact:
+                for j in range(len(estimators)):
+                    val = grid[i, j]
+                    ax.text(j, i, "n/a" if not np.isfinite(val) else "%.2f" % val, ha="center", va="center",
+                            fontsize=6,
+                            color="0.5" if not np.isfinite(val) else ("white" if abs(val) > 0.6 else "black"))
+            best = win.get((cells[i], window))
+            if best in estimators:
+                ax.scatter(estimators.index(best) + 0.3, i - 0.3, marker=WINDOW_MARKER[window], s=26,
+                           color="black", edgecolors="white", linewidths=0.6, zorder=3)
+        ax.set_xticks(range(len(estimators)))
+        ax.set_xticklabels([PRETTY.get(base_model(e), e) + e[len(base_model(e)):] for e in estimators],
+                           rotation=60, ha="right", fontsize=7 if compact else 8)
+        ax.set_title("window %s (%s)" % (window, {"R0": "days 0-12", "R2": "days 2-12", "F": "days 12-14"}[window]),
+                     fontsize=9)
+    axes[0, 0].set_yticks(range(len(cells)))
+    axes[0, 0].set_yticklabels([cell_label(c) for c in cells], fontsize=8)
+    cbar = fig.colorbar(image, ax=axes[0].tolist(), fraction=0.035, pad=0.02)
+    cbar.set_label("skill = 1 - E/E$_{persist}$", fontsize=7)
+    marks = ", ".join("%s = best on %s" % ({"o": "dot", "s": "square", "^": "triangle"}[WINDOW_MARKER[w]], w)
+                      for w in windows)
+    fig.supxlabel("Markers: %s. * = more information, never a winner. sigma = %.2f." % (marks, sigma),
+                  fontsize=6)
+    png_path = Path(png_path)
+    png_path.parent.mkdir(parents=True, exist_ok=True)
+    written = save_figure(fig, png_path)
+    plt.close(fig)
+    return written
+
+
+GA_ESTIMATORS = ("persistence", "ode_openloop_reduced", "cl_pinn", "eks", "eks_aug")
+
+
+def plot(root: Path, sigma: float, paper_dir: Path | None) -> list[Path]:
+    table = json.loads((Path(root) / "regime_table.json").read_text(encoding="utf-8"))
+    fig_dir = Path(root) / "figures"
+    written = plot_heatmap(table, fig_dir / "fig6_regime_map.png", sigma=sigma)
+    written += plot_heatmap(table, fig_dir / "figS_regime_map_all_cells.png", sigma=sigma,
+                            cells=default_cells(table, sigma, pinn_only=False))
+    cells = default_cells(table, sigma)
+    ga_est = [e for e in GA_ESTIMATORS if e in default_estimators(table, sigma, cells)]
+    written += plot_heatmap(table, fig_dir / "graphical_abstract_regime.png", sigma=sigma, windows=("R0",),
+                            cells=cells, estimators=ga_est, compact=True)
+    if paper_dir is not None and Path(paper_dir).exists():
+        for path in written:
+            shutil.copy2(path, Path(paper_dir) / path.name)
+    return written
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1011,7 +1131,15 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--rec-realistic", default=None,
                    help="G4 recoverability file of the realistic kinetics (tau for H4); default "
                         "<root>/analysis/recoverability_k<KKK>.json")
+    p = sub.add_parser("plot", help="draw Fig. 6 and the graphical-abstract panel from regime_table.json")
+    p.add_argument("--root", default="results/v11")
+    p.add_argument("--sigma", type=float, default=0.10)
+    p.add_argument("--paper-dir", default="paper/figures")
     args = parser.parse_args(argv)
+    if args.command == "plot":
+        for path in plot(Path(args.root), args.sigma, Path(args.paper_dir) if args.paper_dir else None):
+            print("wrote", path)
+        return
     result = score(Path(args.root), None if args.no_legacy else Path(args.legacy_lstm), args.metric,
                    Path(args.rec_realistic) if args.rec_realistic else None)
     for path in write_outputs(result, Path(args.root)):
