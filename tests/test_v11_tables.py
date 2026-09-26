@@ -100,14 +100,16 @@ def test_hypotheses_table_and_registry_take_h6_from_the_g4_validation():
 def test_sensor_subset_table_lists_the_sensor_cells():
     rec = {"tag": "k100", "sensor_subsets": [{"channels": ["a", "b"], "ig_mean": 0.5}, {"channels": ["a"], "ig_mean": 0.3}]}
     rows = [{"cell": "k100_ie_a0_drop-TSS_tank5", "extra": "drop-TSS_tank5", "window": "R0", "sigma": 0.1,
-             "primary": True, "estimator": "cl_pinn", "median": 0.4},
+             "primary": True, "estimator": "cl_pinn", "family": "pinn", "n": 2, "median": 0.4},
             {"cell": "k100_ie_a0_drop-TSS_tank5", "extra": "drop-TSS_tank5", "window": "R0", "sigma": 0.1,
-             "primary": False, "estimator": "eks_frozenq", "median": 0.5},
+             "primary": True, "estimator": "eks", "family": "observers", "n": 1, "median": 0.45},
+            {"cell": "k100_ie_a0_drop-TSS_tank5", "extra": "drop-TSS_tank5", "window": "R0", "sigma": 0.1,
+             "primary": False, "estimator": "eks_frozenq", "family": "observers", "n": 1, "median": 0.5},
             {"cell": "k100_ie_a0", "extra": "", "window": "R0", "sigma": 0.1, "primary": True,
-             "estimator": "cl_pinn", "median": 0.3}]
+             "estimator": "cl_pinn", "family": "pinn", "n": 3, "median": 0.3}]
     tab = vt.si_sensor_subsets(rec, {"rows": rows})
     achieved = [r for r in tab["rows"] if r[0].startswith("achieved")]
-    assert len(achieved) == 1 and achieved[0][1] == "cl_pinn" and achieved[0][3] == 0.4
+    assert [(r[1], r[3]) for r in achieved] == [("cl_pinn (two-seed)", 0.4), ("eks", 0.45)]
 
 
 def test_practitioner_table_on_the_g4_recoverability_file():
@@ -120,3 +122,71 @@ def test_practitioner_table_on_the_g4_recoverability_file():
     assert [r[0] for r in tab["rows"]] == list(vt.TRACK_B)
     for row in tab["rows"]:
         assert len(row) == 6 and (row[2] in channels or row[2] == "none")
+
+
+# -- review fixes (independent G7 review, 2026-09-26) -------------------------------------------------
+def _registry_table(comparisons):
+    return {"meta": {}, "rows": [], "crossovers": [], "comparisons": comparisons, "hypotheses": {}}
+
+
+def test_registry_splits_deciding_labelled_and_reference_counts():
+    comps = [
+        {"window": "R0", "pinn": "cl_pinn", "comparator": "eks", "outcome": "win", "decides_hypotheses": True},
+        {"window": "R0", "pinn": "cl_pinn", "comparator": "eks", "outcome": "win", "decides_hypotheses": False},
+        {"window": "R0", "pinn": "cl_pinn", "comparator": "ode_openloop_full", "outcome": "reference",
+         "reference_outcome": "loss", "decides_hypotheses": False},
+    ]
+    reg = vt.numbers_registry(_registry_table(comps), None, None, None, {"total_eq": 1.0})
+    assert reg["wtl.R0.cl_pinn.vs.eks"]["value"]["win"] == 1
+    assert reg["wtl.R0.cl_pinn.vs.eks.labelled"]["value"]["win"] == 1
+    assert reg["wtl_reference.R0.cl_pinn.vs.ode_openloop_full"]["value"]["loss"] == 1
+    assert "wtl.R0.cl_pinn.vs.ode_openloop_full" not in reg
+
+
+def test_residual_keys_keep_the_variant_and_the_registry_refuses_overwrites():
+    residual = {"summary": [
+        {"cell": "k100_ie_a0", "model": "cl_pinn", "variant": "", "noise": 0.1, "n": 3,
+         "median_R0": 0.19, "median_F": 3.0, "median_ratio": 15.4},
+        {"cell": "k100_ie_a0", "model": "cl_pinn", "variant": "drop-TSS_tank5", "noise": 0.1, "n": 2,
+         "median_R0": 0.18, "median_F": 3.3, "median_ratio": 18.1}]}
+    reg = vt.numbers_registry(_registry_table([]), residual, None, None, {"total_eq": 1.0})
+    assert reg["residual.k100_ie_a0.cl_pinn.sigma0.10.median_R0"]["value"] == 0.19
+    assert reg["residual.k100_ie_a0.cl_pinn[drop-TSS_tank5].sigma0.10.median_R0"]["value"] == 0.18
+    twice = {"summary": residual["summary"][:1] * 2}
+    with pytest.raises(ValueError, match="written twice"):
+        vt.numbers_registry(_registry_table([]), twice, None, None, {"total_eq": 1.0})
+
+
+def test_sigma_log_table_keeps_the_registered_sigma_only():
+    def row(cell, extra, sigma, est, med):
+        return {"cell": cell, "extra": extra, "sigma": sigma, "estimator": est, "window": "R0", "median": med,
+                "skill": 0.0}
+
+    rows = [row("k100_ic_as_sl04", "sl04", 0.1, "eks", 0.9), row("k100_ic_as", "", 0.1, "eks", 1.0),
+            row("k100_ic_as", "", 0.05, "eks", 1.2), row("k100_ic_as_sl04", "sl04", 0.05, "eks", 0.8)]
+    tab = vt.si_sigma_log({"rows": rows}, 0.10)
+    assert sorted((r[1], r[3]) for r in tab["rows"]) == [(0.4, 0.9), (0.6, 1.0)]
+
+
+def test_lab_seed_table_lists_the_registered_seed_beside_the_spread():
+    table = {"lab_seed_spread": [{"cell": "k050_ic_al1", "sigma": 0.1, "estimator": "eks", "window": "R0",
+                                  "registered_seed_value": 0.5, "n": 9, "median": 0.45, "p25": 0.43, "p75": 0.47,
+                                  "min": 0.41, "max": 0.49, "registered_seed_outside_range": True}]}
+    tab = vt.si_lab_seeds(table)
+    assert tab["rows"][0][4] == 0.5 and tab["rows"][0][5] == 9 and tab["rows"][0][-1] is True
+
+
+def test_tables_refuse_a_missing_validation_file_and_a_mismatched_realistic_file(table_inputs):
+    root = table_inputs
+    base = ["--root", str(root), "--kinetic-subset", str(root / "analysis" / "kinetic_subset.json"),
+            "--prereg-commit", "abc123def456", "--rec-sensors", str(root / "analysis" / "recoverability_k100.json")]
+    with pytest.raises(FileNotFoundError):
+        vt.main(base + ["--rec-realistic", str(root / "analysis" / "recoverability_k100.json"),
+                        "--validation", str(root / "analysis" / "missing.json")])
+    table_path = root / "regime_table.json"
+    table = json.loads(table_path.read_text(encoding="utf-8"))
+    table["meta"]["realistic_k"] = "050"
+    table_path.write_text(json.dumps(table), encoding="utf-8")
+    with pytest.raises(ValueError, match="gate D3"):
+        vt.main(base + ["--rec-realistic", str(root / "analysis" / "recoverability_k100.json"),
+                        "--validation", str(root / "analysis" / "recoverability_validation.json")])

@@ -31,7 +31,9 @@ from scripts.regime_map import (  # noqa: E402
     _cell_sort_key,
     base_model,
     cell_label,
+    comparison_kind,
     parse_cell,
+    seed_label,
 )
 from scripts.v11_figures import CLASSES, load_recoverability, normalise_validation  # noqa: E402
 
@@ -199,7 +201,8 @@ def t3_practitioner(rec: dict[str, Any]) -> dict[str, Any]:
         for ch in full["channels"]:
             drop = by_set.get(frozenset(full["channels"]) - {ch})
             if drop is not None:
-                losses[ch] = float(np.sum(np.array(full["per_state_ig"][comp]) - np.array(drop["per_state_ig"][comp])))
+                # mean over tanks, the scale of the assay gains below (MIN_GAIN applies to both)
+                losses[ch] = float(np.mean(np.array(full["per_state_ig"][comp]) - np.array(drop["per_state_ig"][comp])))
         probe = max(losses, key=losses.get) if losses and max(losses.values()) >= MIN_GAIN else "none"
         gains = {a["assay"] + " (" + a["tier"] + ")": float(a["ig_gain"].get(comp, 0.0)) for a in rec["lab_assays"]}
         assay = max(gains, key=gains.get) if gains and max(gains.values()) >= MIN_GAIN else "none"
@@ -209,20 +212,25 @@ def t3_practitioner(rec: dict[str, Any]) -> dict[str, Any]:
         else:
             interval = "influent analysis" if cls == "forcing-slaved" else "online"
         rows.append([comp, RECOVERABLE[cls], probe, assay, interval, tau])
+    tiers_only = any(a["assay"] == "start-up panel" for a in rec["lab_assays"])
     return {"headers": ["State", "Recoverable", "Probe that carries it", "Assay that helps most",
                         "Re-sampling interval", "Memory time (d)"],
             "rows": rows, "label": "tab:practitioner",
             "caption": "Practitioner guidance per never-measured state (majority class over the five tanks; the "
-                       "re-sampling interval is the start-up memory time rounded to whole days).",
+                       "re-sampling interval is the start-up memory time rounded to whole days; probe loss and assay "
+                       "gain are mean information gains over the tanks, shown when at least %.2f).%s"
+                       % (MIN_GAIN, " Assay gains are laboratory tiers, not single assays." if tiers_only else ""),
             "sources": ["results/v11/analysis/recoverability_%s.json" % rec["tag"]]}
 
 
 # -- Supplementary tables -----------------------------------------------------------------
 def si_components(table: dict[str, Any], sigma: float, window: str) -> dict[str, Any]:
-    rows = [[cell_label(r["cell"]), r["estimator"]] + [r["per_component_fixed"][c] for c in TRACK_B]
+    rows = [[cell_label(r["cell"]), r["estimator"], r["n"], seed_label(r) or ""] + [r["per_component_fixed"][c] for c in TRACK_B]
             for r in table["rows"] if abs(r["sigma"] - sigma) < 1e-9 and r["window"] == window and "per_component_fixed" in r]
-    return {"headers": ["Cell", "Estimator"] + list(TRACK_B), "rows": rows, "label": "tab:si-components-%s" % window,
-            "caption": "Per-component NRMSE (fixed R0 range), window %s, sigma %.2f, median over seeds." % (window, sigma),
+    return {"headers": ["Cell", "Estimator", "n", "label"] + list(TRACK_B), "rows": rows,
+            "label": "tab:si-components-%s" % window,
+            "caption": "Per-component NRMSE (fixed R0 range), window %s, sigma %.2f, median over the n seeds "
+                       "(two-seed and one-seed PINN rows labelled, Section 9)." % (window, sigma),
             "sources": ["results/v11/regime_table.json"]}
 
 
@@ -241,11 +249,14 @@ def si_observer_diagnostics(table: dict[str, Any]) -> dict[str, Any]:
 
 
 def si_realisations(table: dict[str, Any]) -> dict[str, Any]:
-    rows = [[cell_label(s["cell"]), s["sigma"], s["estimator"], s["window"], s["n"], s["median"], s["p25"], s["p75"],
-             s["min"], s["max"]] for s in table["realisation_spread"]]
-    return {"headers": ["Cell", "sigma", "Estimator", "Window", "n", "median", "p25", "p75", "min", "max"],
+    rows = [[cell_label(s["cell"]), s["sigma"], s["estimator"], s["window"], s.get("realisation0"), s["n"], s["median"],
+             s["p25"], s["p75"], s["min"], s["max"], s.get("realisation0_outside_range")]
+            for s in table["realisation_spread"]]
+    return {"headers": ["Cell", "sigma", "Estimator", "Window", "realisation 0", "n (1-9)", "median", "p25", "p75",
+                        "min", "max", "r0 outside"],
             "rows": rows, "label": "tab:si-realisations",
-            "caption": "Spread over noise realisations (reported separately, never pooled with seeds).",
+            "caption": "Noise realisation 0 (the registered comparison) next to the spread over realisations 1-9, "
+                       "which is reported beside it and never pooled with it (Sections 2 and 9).",
             "sources": ["results/v11/regime_table.json"]}
 
 
@@ -264,25 +275,41 @@ def si_random_mismatch(table: dict[str, Any]) -> dict[str, Any]:
             "sources": ["results/v11/regime_table.json"]}
 
 
-def si_sigma_log(table: dict[str, Any]) -> dict[str, Any]:
+def si_lab_seeds(table: dict[str, Any]) -> dict[str, Any]:
+    rows = [[cell_label(s["cell"]), s["sigma"], s["estimator"], s["window"], s["registered_seed_value"], s["n"],
+             s["median"], s["p25"], s["p75"], s["min"], s["max"], s["registered_seed_outside_range"]]
+            for s in table.get("lab_seed_spread", [])]
+    return {"headers": ["Cell", "sigma", "Estimator", "Window", "seed 20260923", "n (further seeds)", "median", "p25",
+                        "p75", "min", "max", "registered seed outside"],
+            "rows": rows, "label": "tab:si-lab-seeds",
+            "caption": "Laboratory panel: the registered seed next to the spread over the nine further laboratory "
+                       "seeds, never pooled with it (Section 2).",
+            "sources": ["results/v11/regime_table.json"]}
+
+
+def si_sigma_log(table: dict[str, Any], sigma: float = 0.10) -> dict[str, Any]:
     sl_rows = [(r, int(m.group(1)) / 10.0) for r in table["rows"]
-               if (m := re.fullmatch(r"sl(\d+)", r["extra"] or "")) and r["window"] == "R0"]
+               if (m := re.fullmatch(r"sl(\d+)", r["extra"] or "")) and r["window"] == "R0"
+               and abs(r["sigma"] - sigma) < 1e-9]
     bases = {r["cell"][: -len(r["extra"]) - 1] for r, _ in sl_rows}
     estimators = {r["estimator"] for r, _ in sl_rows}
     base_rows = [(r, ANCHOR_SIGMA_LOG) for r in table["rows"]
-                 if r["cell"] in bases and r["window"] == "R0" and r["estimator"] in estimators]
+                 if r["cell"] in bases and r["window"] == "R0" and r["estimator"] in estimators
+                 and abs(r["sigma"] - sigma) < 1e-9]
     rows = sorted(([cell_label(r["cell"].split("_sl")[0]), s, r["estimator"], r["median"], r["skill"]]
                    for r, s in sl_rows + base_rows), key=lambda x: (x[0], x[2], x[1]))
     return {"headers": ["Cell", "sigma_log", "Estimator", "Track B NRMSE (R0)", "skill"], "rows": rows,
             "label": "tab:si-sigmalog", "caption": "Sensitivity to the spread of the start-state ensemble "
-                                                   "(sigma_log 0.4 and 0.8 against the pre-registered 0.6).",
+                                                   "(sigma_log 0.4 and 0.8 against the pre-registered 0.6), "
+                                                   "sigma %.2f." % sigma,
             "sources": ["results/v11/regime_table.json"]}
 
 
 def si_sensor_subsets(rec: dict[str, Any], table: dict[str, Any]) -> dict[str, Any]:
     ranked = sorted(rec["sensor_subsets"], key=lambda s: -s["ig_mean"])
     rows = [["Fisher ranking", ", ".join(s["channels"]), s["ig_mean"], None] for s in ranked[:10] + ranked[-5:]]
-    rows += [["achieved (%s)" % cell_label(r["cell"]), r["estimator"], None, r["median"]]
+    rows += [["achieved (%s)" % cell_label(r["cell"]),
+              r["estimator"] + (" (%s)" % seed_label(r) if seed_label(r) else ""), None, r["median"]]
              for r in table["rows"] if r["window"] == "R0" and r["primary"] and abs(r["sigma"] - 0.1) < 1e-9
              and SENSOR_EXTRA.match(r["extra"] or "")]
     return {"headers": ["Kind", "Channels or estimator", "mean information gain", "Track B NRMSE (R0)"], "rows": rows,
@@ -370,27 +397,52 @@ def numbers_registry(table: dict[str, Any], residual: dict[str, Any] | None, fig
                      validation: dict[str, Any] | None, counts: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
 
-    def put(key: str, value: Any, source: str, path: str) -> None:
-        out[key] = {"value": value, "source": source, "path": path}
+    def put(key: str, value: Any, source: str, path: str, **extra: Any) -> None:
+        if key in out:
+            raise ValueError("number registry key %r would be written twice" % key)
+        out[key] = {"value": value, "source": source, "path": path, **extra}
 
     for i, r in enumerate(table["rows"]):
         if r["k"] is not None and not r["extra"] and r["rand"] is None and r["primary"]:
             stem = "trackB.%s.%s.sigma%.2f.%s" % (r["window"], r["cell"], r["sigma"], r["estimator"])
-            put(stem + ".median", r["median"], "results/v11/regime_table.json", "rows[%d].median" % i)
-            put(stem + ".skill", r["skill"], "results/v11/regime_table.json", "rows[%d].skill" % i)
-            put(stem + ".gap_closed", r["gap_closed"], "results/v11/regime_table.json", "rows[%d].gap_closed" % i)
+            label = {"n": r["n"], "label": seed_label(r)}
+            put(stem + ".median", r["median"], "results/v11/regime_table.json", "rows[%d].median" % i, **label)
+            put(stem + ".skill", r["skill"], "results/v11/regime_table.json", "rows[%d].skill" % i, **label)
+            put(stem + ".gap_closed", r["gap_closed"], "results/v11/regime_table.json", "rows[%d].gap_closed" % i,
+                **label)
     for i, c in enumerate(table["crossovers"]):
         put("alpha_star.%s.%s_%s.sigma%.2f.%s" % (c["window"], c["influent"], c["anchor"], c["sigma"], c["estimator"]),
             c["alpha_star"], "results/v11/regime_table.json", "crossovers[%d].alpha_star" % i)
+    # wtl.*: registered comparisons with three-seed PINN rows (they decide); .labelled: two-seed or one-seed rows
+    # and the added LSTM rule; wtl_reference.*: the outcome the rule would give against more-information rows.
     wtl: dict[str, Counter] = {}
     for c in table["comparisons"]:
-        wtl.setdefault("wtl.%s.%s.vs.%s" % (c["window"], c["pinn"], c["comparator"]), Counter())[c["outcome"]] += 1
+        kind = comparison_kind(c)
+        stem = "wtl.%s.%s.vs.%s" % (c["window"], c["pinn"], c["comparator"])
+        key = {"deciding": stem, "labelled": stem + ".labelled", "reference": "wtl_reference" + stem[3:]}[kind]
+        wtl.setdefault(key, Counter())[c["reference_outcome"] if kind == "reference" else c["outcome"]] += 1
     for key, n in sorted(wtl.items()):
         put(key, {"win": n["win"], "tie": n["tie"], "loss": n["loss"], "not_decided": n["not_decided"]},
             "results/v11/regime_table.json", "comparisons")
     hyp = table.get("hypotheses") or {}
     for name in sorted(k for k in hyp if re.fullmatch(r"H\d", k)):
         put("hyp.%s.status" % name, hyp[name]["status"], "results/v11/regime_table.json", "hypotheses.%s.status" % name)
+    if "expected_tie_outcome" in hyp.get("H3", {}):
+        put("hyp.H3.expected_tie_outcome", hyp["H3"]["expected_tie_outcome"], "results/v11/regime_table.json",
+            "hypotheses.H3.expected_tie_outcome")
+    for i, p in enumerate(table.get("parameter_recovery", [])):
+        if abs(p["sigma"] - 0.10) > 1e-9 or p["estimator"] not in ("cl_pinn_theta", "eks_aug"):
+            continue
+        for name, err in (p.get("median_abs_log_error") or {}).items():
+            put("param_recovery.%s.%s.%s.median_abs_log_error" % (p["cell"], p["estimator"], name), err,
+                "results/v11/regime_table.json", "parameter_recovery[%d].median_abs_log_error.%s" % (i, name),
+                n=p.get("n"))
+    for i, sp in enumerate(table.get("lab_seed_spread", [])):
+        if sp["window"] != "R0" or abs(sp["sigma"] - 0.10) > 1e-9:
+            continue
+        stem = "lab_seeds.%s.%s" % (sp["cell"], sp["estimator"])
+        for k in ("registered_seed_value", "median", "min", "max"):
+            put("%s.%s" % (stem, k), sp[k], "results/v11/regime_table.json", "lab_seed_spread[%d].%s" % (i, k))
     if "alpha_star" in hyp.get("H2", {}):
         put("hyp.H2.alpha_star", hyp["H2"]["alpha_star"], "results/v11/regime_table.json", "hypotheses.H2.alpha_star")
     for est, fam in (hyp.get("H5", {}).get("families") or {}).items():
@@ -405,7 +457,8 @@ def numbers_registry(table: dict[str, Any], residual: dict[str, Any] | None, fig
         "meta.diverged_runs")
     if residual:
         for i, s in enumerate(residual["summary"]):
-            stem = "residual.%s.%s.sigma%.2f" % (s["cell"], s["model"], s["noise"])
+            stem = "residual.%s.%s%s.sigma%.2f" % (s["cell"], s["model"],
+                                                   "[%s]" % s["variant"] if s.get("variant") else "", s["noise"])
             for k in ("median_R0", "median_F", "median_ratio"):
                 put("%s.%s" % (stem, k), s[k], "results/v11/residual_diagnostic.json", "summary[%d].%s" % (i, k))
     if fig_sources:
@@ -429,7 +482,12 @@ def numbers_registry(table: dict[str, Any], residual: dict[str, Any] | None, fig
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", default="results/v11")
-    parser.add_argument("--rec-realistic", default="results/v11/analysis/recoverability_k100.json")
+    parser.add_argument("--rec-realistic", default=None,
+                        help="recoverability file of the realistic kinetics (T3, S_lab_assays); default: "
+                             "<root>/analysis/recoverability_k<meta.realistic_k>.json")
+    parser.add_argument("--rec-sensors", default=None,
+                        help="recoverability file of the sensor-confirmation cells (S_sensor_subsets); default: "
+                             "<root>/analysis/recoverability_k100.json (K1-Ie-A0, Section 7)")
     parser.add_argument("--kinetic-subset", default="results/v11/analysis/kinetic_subset.json")
     parser.add_argument("--validation", default="results/v11/analysis/validation/recoverability_validation.json")
     parser.add_argument("--prereg-commit", default=None, help="skip the git lookup (tests)")
@@ -439,12 +497,21 @@ def main(argv: list[str] | None = None) -> None:
     out = root / "tables"
     out.mkdir(parents=True, exist_ok=True)
     table = json.loads((root / "regime_table.json").read_text(encoding="utf-8"))
-    rec = load_recoverability(Path(args.rec_realistic))
+    realistic = table.get("meta", {}).get("realistic_k")
+    rec_path = Path(args.rec_realistic) if args.rec_realistic else root / "analysis" / (
+        "recoverability_k%s.json" % (realistic or "100"))
+    rec = load_recoverability(rec_path)
+    if realistic is not None and rec.get("tag") not in (None, "k%s" % realistic):
+        raise ValueError("%s is tagged %r but the regime table's realistic cells are k%s (gate D3)"
+                         % (rec_path, rec.get("tag"), realistic))
+    rec_sensors = load_recoverability(Path(args.rec_sensors) if args.rec_sensors
+                                      else root / "analysis" / "recoverability_k100.json")
     validation_path = Path(args.validation)
-    validation = None
-    if validation_path.exists():
-        validation = normalise_validation(json.loads(validation_path.read_text(encoding="utf-8")))
-        validation["source"] = str(validation_path).replace("\\", "/")
+    if not validation_path.exists():
+        # H6 is a registered hypothesis (Section 3); it is never dropped silently.
+        raise FileNotFoundError("validation file %s not found; run scripts.recoverability_validation" % validation_path)
+    validation = normalise_validation(json.loads(validation_path.read_text(encoding="utf-8")))
+    validation["source"] = str(validation_path).replace("\\", "/")
     ras = sorted({int(json.loads(p.read_text(encoding="utf-8")).get("ras_filter_window", 1))
                   for p in (root / "pinn").glob("*/*/summary.json")}) or [1]
     if len(ras) != 1:
@@ -459,8 +526,9 @@ def main(argv: list[str] | None = None) -> None:
         "S_ekf": si_observer_diagnostics(table),
         "S_realisations": si_realisations(table),
         "S_random_mismatch": si_random_mismatch(table),
-        "S_sigma_log": si_sigma_log(table),
-        "S_sensor_subsets": si_sensor_subsets(rec, table),
+        "S_sigma_log": si_sigma_log(table, args.sigma),
+        "S_lab_seeds": si_lab_seeds(table),
+        "S_sensor_subsets": si_sensor_subsets(rec_sensors, table),
         "S_lab_assays": si_lab_assays(rec),
         "S_v10_superseded": si_v10_superseded(Path("results/seed_bands.json"), Path("results/benchmark_detail.json")),
         "S_run_counts": counts,
