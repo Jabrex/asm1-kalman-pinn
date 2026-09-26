@@ -56,6 +56,8 @@ COLOURS = {"persistence": "0.45", "ode_openloop_reduced": "black", "ode_openloop
            "lstm_v10": "tab:green", "pinn": "tab:red", "cl_pinn": "tab:orange", "cl_pinn_theta": "tab:purple",
            "ekf": "tab:cyan", "eks": "tab:blue", "ieks": "navy", "eks_aug": "tab:olive"}
 THRESHOLD_TAU_DAYS = 6.0
+#: Fig. 2c draws indices below this value at the floor (display only; rho uses the actual values).
+INDEX_FLOOR = 1e-4
 WINDOW_DAYS = 12.0
 
 
@@ -253,13 +255,26 @@ def fig2_recoverability(rec: dict[str, Any], states: dict[str, Any], validation:
             raise ValueError("Fig. 2c points give rho %.6f for %s but the validation file reports %.6f; the two "
                              "scripts use different error definitions" % (rho, estimator, float(entry["rho"])))
         text = "rho = %.2f" % rho if entry is None else "rho = %.2f [%.2f, %.2f]" % (rho, *entry["ci"])
-        ax_c.scatter(idx[mask], err[mask], s=10, color=COLOURS.get(estimator), alpha=0.8,
+        # Display only: states with an index below the floor (numerically zero) are drawn at the floor
+        # as open markers; rho above is computed from the actual values.
+        shown = np.maximum(idx[mask], INDEX_FLOOR)
+        low = idx[mask] < INDEX_FLOOR
+        ax_c.scatter(shown[~low], err[mask][~low], s=10, color=COLOURS.get(estimator), alpha=0.8,
                      label="%s: %s" % (_label(estimator), text))
+        if low.any():
+            ax_c.scatter(shown[low], err[mask][low], s=14, facecolors="none", edgecolors=COLOURS.get(estimator),
+                         linewidths=0.8)
         stats["estimators"][estimator] = {"rho_points": rho, "n_points": int(mask.sum()),
+                                          "n_below_display_floor": int(low.sum()),
                                           "validation": None if entry is None else
                                           {k: v for k, v in entry.items() if k != "points_index"}}
     ax_c.set_xscale("log")
     ax_c.set_yscale("log")
+    if any(e.get("n_below_display_floor") for e in stats["estimators"].values()):
+        ax_c.axvline(INDEX_FLOOR, color="0.6", lw=0.6, ls=":")
+        ax_c.text(INDEX_FLOOR, 0.02, " open: index < %g" % INDEX_FLOOR, transform=ax_c.get_xaxis_transform(),
+                  fontsize=6, color="0.4")
+    stats["index_display_floor"] = INDEX_FLOOR
     ax_c.set_xlabel("%s (model-derived index)" % index_name.replace("_", " "), fontsize=8)
     ax_c.set_ylabel("per-state NRMSE, window R0", fontsize=8)
     ax_c.set_title("(c) index against achieved error, %s" % cell_label(cell), fontsize=9, loc="left")
@@ -345,7 +360,8 @@ def fig4_mismatch(table: dict[str, Any], png: Path, sigma: float, influent: str 
                         xycoords=("data", "axes fraction"), fontsize=6, va="top", color=COLOURS.get(c["estimator"]))
             plotted["crossovers"].append(c)
         ax.set_title("window %s" % window, fontsize=9)
-    fig.supxlabel("kinetic mismatch alpha (0 = vault 20 C truth, 1 = BSM1 15 C kinetic set)", fontsize=8)
+    for ax in axes:
+        ax.set_xlabel("kinetic mismatch alpha\n(0 = vault 20 C, 1 = BSM1 15 C)", fontsize=7)
     axes[0].set_ylabel("Track B NRMSE (fixed R0 range)", fontsize=8)
     handles, labels = [], []
     for ax in axes:

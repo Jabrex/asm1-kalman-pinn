@@ -117,6 +117,7 @@ def main(argv: list[str] | None = None) -> None:
         fset, fmetric = args.figure_set, args.figure_metric
         fig, ax = plt.subplots(figsize=(7, 4.5))
         noises = sorted({row["noise"] for row in rows})
+        seed_counts: set[int] = set()
         for model in args.band_models:
             pts = [
                 bands["%s|%.2f|%s" % (model, sigma, fset)][fmetric]
@@ -126,9 +127,15 @@ def main(argv: list[str] | None = None) -> None:
             xs = [sigma for sigma in noises if "%s|%.2f|%s" % (model, sigma, fset) in bands]
             if not pts:
                 continue
-            n_seeds = max(p["n"] for p in pts)
-            ax.plot(xs, [p["median"] for p in pts], marker="o", color=COLORS.get(model),
-                    label="%s (median of %d seeds)" % (model, n_seeds))
+            counts = [p["n"] for p in pts]
+            seed_counts.update(counts)
+            if len(set(counts)) == 1:
+                label = "%s (median of %d seeds)" % (model, counts[0])
+            else:
+                # seed count per sigma, so two-seed points are labelled as such (Section 9)
+                label = "%s (median; seeds: %s)" % (
+                    model, ", ".join("%d at sigma %.2f" % (n, s) for s, n in zip(xs, counts)))
+            ax.plot(xs, [p["median"] for p in pts], marker="o", color=COLORS.get(model), label=label)
             ax.fill_between(xs, [p["min"] for p in pts], [p["max"] for p in pts],
                             color=COLORS.get(model), alpha=0.2)
         for model in args.context_models:
@@ -146,7 +153,10 @@ def main(argv: list[str] | None = None) -> None:
                 )
         ax.set_xlabel("measurement noise sigma")
         ax.set_ylabel("%s (%s)" % (METRIC_TEXT[fmetric], SET_TEXT[fset]))
-        ax.set_title("Robustness on never-measured components, min-max over %d seeds" % len(args.runs))
+        if len(seed_counts) <= 1:
+            ax.set_title("Robustness on never-measured components, min-max over %d seeds" % len(args.runs))
+        else:
+            ax.set_title("Robustness on never-measured components, min-max over the seeds at each sigma")
         ax.legend(fontsize=8)
         fig.tight_layout()
         fig_path.parent.mkdir(parents=True, exist_ok=True)

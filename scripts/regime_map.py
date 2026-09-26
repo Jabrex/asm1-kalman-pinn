@@ -1213,8 +1213,13 @@ def plot_heatmap(table: dict[str, Any], png_path: Path, sigma: float = 0.10,
     cbar.set_label("skill = 1 - E/E$_{persist}$", fontsize=7)
     marks = ", ".join("%s = best on %s" % ({"o": "dot", "s": "square", "^": "triangle"}[WINDOW_MARKER[w]], w)
                       for w in windows)
-    fig.supxlabel("Markers: %s. * = more information, never a winner. \u2020 = PINN row with one or two seeds "
-                  "(labelled, Section 9). sigma = %.2f." % (marks, sigma), fontsize=6)
+    if compact:
+        # the graphical-abstract panel is narrow: a short note on two lines
+        fig.supxlabel("%s; skill against anchor-aware persistence.\nsigma = %.2f, realisation 0." % (marks[:1].upper() + marks[1:],
+                      sigma), fontsize=6)
+    else:
+        fig.supxlabel("Markers: %s. * = more information, never a winner. \u2020 = PINN row with one or two seeds "
+                      "(labelled, Section 9). sigma = %.2f." % (marks, sigma), fontsize=6)
     png_path = Path(png_path)
     png_path.parent.mkdir(parents=True, exist_ok=True)
     written = save_figure(fig, png_path)
