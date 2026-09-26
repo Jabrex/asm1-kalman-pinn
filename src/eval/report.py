@@ -17,30 +17,60 @@ from __future__ import annotations
 
 import csv
 import json
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 import numpy as np
 
 from ..asm1.plant import Bsm1Plant
+from ..asm1.vault_loader import vault
 from ..data.sensors import ObservationDataset, observed_components, unobserved_components
 from .metrics import (
     continuity_of_prediction,
     effluent_quality_index,
+    level_error,
     state_metrics,
     track_summary,
+    within_tolerance_fraction,
 )
 
 EVAL_SETS = ("train", "holdout", "rain")
+#: Components whose level error (RMSE / mean |truth|) enters every row.
+LEVEL_COMPONENTS = ("X_B_H", "X_B_A", "X_I", "X_P")
+#: Biomass inventories scored by the tank-mean +-10 % tolerance fraction.
+TOLERANCE_COMPONENTS = ("X_B_H", "X_B_A")
+TOLERANCE_REL = 0.10
+#: Summary metadata copied into every row. v1.0 summaries lack most keys; the
+#: defaults describe the v1.0 set-up (vault kinetics, truth anchor, exact influent).
+ROW_METADATA: dict[str, Any] = {
+    "seed": 0,
+    "truth_preset": "vault20",
+    "alpha": None,
+    "anchor": None,
+    "influent_mode": "exact",
+    "variant": "",
+    "learned_multipliers": None,
+}
+#: Row keys that are not scalars and stay out of benchmark.csv.
+CSV_EXCLUDE = ("per_component", "learned_multipliers")
+#: A window label maps to (base evaluation set, first day, last day).
+ExtraWindows = Mapping[str, tuple[str, float, float]]
+
+
+@lru_cache(maxsize=32)
+def _load_dataset(path: str) -> ObservationDataset:
+    """Datasets are read-only here; windows copy their slices, so sharing one load is safe."""
+    return ObservationDataset.load(path)
 
 
 def _truth_for(set_name: str, cfg: dict[str, Any], data_dir: Path) -> ObservationDataset | None:
     sigma_tag = ("%.2f" % float(cfg["noise"])).replace(".", "p")
     scenario = "rain" if set_name == "rain" else "dry"
-    path = data_dir / ("obs_%s_sigma%s.npz" % (scenario, sigma_tag))
+    path = Path(data_dir) / ("obs_%s_sigma%s.npz" % (scenario, sigma_tag))
     if not path.exists():
         return None
-    dataset = ObservationDataset.load(path)
+    dataset = _load_dataset(str(path.resolve()))
     if set_name == "train":
         return dataset.window(0.0, float(cfg.get("train_end_day", 12.0)))
     if set_name == "holdout":
@@ -49,92 +79,195 @@ def _truth_for(set_name: str, cfg: dict[str, Any], data_dir: Path) -> Observatio
     return dataset
 
 
-def collect_runs(runs_dir: Path, data_dir: Path) -> list[dict[str, Any]]:
+def _run_cfg(summary: dict[str, Any]) -> dict[str, Any]:
+    # Windows come from the run itself, so changing them in base.yaml does
+    # not silently mis-slice the evaluation sets here.
+    return {
+        "noise": summary["noise"],
+        "train_end_day": summary.get("train_end_day", 12.0),
+        "holdout_days": tuple(summary.get("holdout_days", (12.0, 14.0))),
+    }
+
+
+def window_pairs(
+    run_dir: Path, data_dir: Path, extra_windows: ExtraWindows | None = None
+) -> tuple[dict[str, Any], list[tuple[str, np.ndarray, np.ndarray, np.ndarray | None]]]:
+    """Aligned ``(label, truth, prediction, fixed_spread)`` for every scored window.
+
+    The base sets come first, in ``EVAL_SETS`` order, then each extra window,
+    sliced out of its base set by time (both ends inclusive). ``fixed_spread``
+    is the training-window range (14,), shared by every window of the run.
+    """
+    run_dir, data_dir = Path(run_dir), Path(data_dir)
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    cfg = _run_cfg(summary)
+    # Fixed reference range from the training window, so NRMSE stays
+    # comparable across evaluation windows (the rain event widens the
+    # per-window range and would otherwise flatter rain rows).
+    train_truth = _truth_for("train", cfg, data_dir)
+    fixed_spread = None
+    if train_truth is not None:
+        flat = train_truth.truth_reactor.reshape(-1, train_truth.truth_reactor.shape[-1])
+        fixed_spread = flat.max(axis=0) - flat.min(axis=0)
+    truths: dict[str, ObservationDataset | None] = {"train": train_truth}
+    pairs: list[tuple[str, np.ndarray, np.ndarray, np.ndarray | None]] = []
+    with np.load(run_dir / "predictions.npz") as preds:
+        for set_name in EVAL_SETS:
+            if set_name not in preds.files:
+                continue
+            if set_name not in truths:
+                truths[set_name] = _truth_for(set_name, cfg, data_dir)
+            truth = truths[set_name]
+            if truth is None:
+                continue
+            pred = preds[set_name]
+            n = min(len(pred), len(truth.truth_reactor))
+            pairs.append((set_name, truth.truth_reactor[:n], pred[:n], fixed_spread))
+        for label, (base, lo, hi) in (extra_windows or {}).items():
+            if base not in preds.files:
+                continue
+            if base not in truths:
+                truths[base] = _truth_for(base, cfg, data_dir)
+            truth = truths[base]
+            if truth is None:
+                continue
+            pred = preds[base]
+            n = min(len(pred), len(truth.truth_reactor))
+            t = truth.t[:n]
+            mask = (t >= float(lo) - 1e-9) & (t <= float(hi) + 1e-9)
+            pairs.append((label, truth.truth_reactor[:n][mask], pred[:n][mask], fixed_spread))
+    return summary, pairs
+
+
+def score_arrays(
+    summary: dict[str, Any],
+    set_name: str,
+    truth: np.ndarray,
+    pred: np.ndarray,
+    fixed_spread: np.ndarray | None,
+) -> dict[str, Any]:
+    metrics = state_metrics(truth, pred)
+    tracks = track_summary(metrics)
+    fixed = state_metrics(truth, pred, spread=fixed_spread)
+    tracks_fixed = track_summary(fixed)
+    row: dict[str, Any] = {
+        "run_id": summary["run_id"],
+        "model": summary["model"],
+        "arch": summary["arch"],
+        "curriculum": summary["curriculum"],
+        "noise": summary["noise"],
+        "profile": summary["profile"],
+        "eval_set": set_name,
+        "steps": summary["steps"],
+        "train_seconds": summary["train_seconds"],
+        "n_parameters": summary["n_parameters"],
+        "track_a_nrmse": tracks["track_a_measured"]["nrmse"],
+        "track_a_r2": tracks["track_a_measured"]["r2"],
+        "track_a_mae": tracks["track_a_measured"]["mae"],
+        "track_b_nrmse": tracks["track_b_unmeasured"]["nrmse"],
+        "track_b_r2": tracks["track_b_unmeasured"]["r2"],
+        "track_b_mae": tracks["track_b_unmeasured"]["mae"],
+        "track_a_nrmse_fixed": tracks_fixed["track_a_measured"]["nrmse"],
+        "track_b_nrmse_fixed": tracks_fixed["track_b_unmeasured"]["nrmse"],
+        "final_physics_loss": summary.get("final_losses", {}).get("physics"),
+        "per_component": tracks["per_component"],
+    }
+    components = vault().components
+    levels = level_error(truth, pred)
+    for name in LEVEL_COMPONENTS:
+        row["level_error_%s" % name] = float(levels[components.index(name)])
+    tol = within_tolerance_fraction(
+        truth, pred, components=TOLERANCE_COMPONENTS, rel_tol=TOLERANCE_REL
+    )
+    if not isinstance(tol, Mapping):
+        tol = dict(zip(TOLERANCE_COMPONENTS, np.atleast_1d(np.asarray(tol, dtype=float))))
+    for name in TOLERANCE_COMPONENTS:
+        row["tol10_%s" % name] = float(tol[name])
+    for key, default in ROW_METADATA.items():
+        row[key] = summary.get(key, default)
+    return row
+
+
+def score_run(
+    run_dir: Path, data_dir: Path, extra_windows: ExtraWindows | None = None
+) -> list[dict[str, Any]]:
+    """Rows for one run directory, one per scored window."""
+    summary, pairs = window_pairs(run_dir, data_dir, extra_windows)
+    return [score_arrays(summary, label, truth, pred, spread) for label, truth, pred, spread in pairs]
+
+
+def collect_runs(
+    runs_dir: Path, data_dir: Path, extra_windows: ExtraWindows | None = None
+) -> list[dict[str, Any]]:
     """Score every run directory that has both a summary and predictions.
 
     Directories starting with ``_`` are verification probes (written by
     scripts/verify_model), not benchmark runs, and are skipped.
+    ``extra_windows``, for example ``{"recon2": ("train", 2.0, 12.0)}``, adds
+    rows for time slices of a base set; ``None`` scores exactly the v1.0 sets.
     """
     rows: list[dict[str, Any]] = []
     for run_dir in sorted(
-        p for p in runs_dir.iterdir() if p.is_dir() and not p.name.startswith("_")
+        p for p in Path(runs_dir).iterdir() if p.is_dir() and not p.name.startswith("_")
     ):
-        summary_path = run_dir / "summary.json"
-        pred_path = run_dir / "predictions.npz"
-        if not (summary_path.exists() and pred_path.exists()):
+        if not ((run_dir / "summary.json").exists() and (run_dir / "predictions.npz").exists()):
             continue
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        # Windows come from the run itself, so changing them in base.yaml does
-        # not silently mis-slice the evaluation sets here.
-        cfg = {
-            "noise": summary["noise"],
-            "train_end_day": summary.get("train_end_day", 12.0),
-            "holdout_days": tuple(summary.get("holdout_days", (12.0, 14.0))),
-        }
-        # Fixed reference range from the training window, so NRMSE stays
-        # comparable across evaluation windows (the rain event widens the
-        # per-window range and would otherwise flatter rain rows).
-        train_truth = _truth_for("train", cfg, data_dir)
-        fixed_spread = None
-        if train_truth is not None:
-            flat = train_truth.truth_reactor.reshape(-1, train_truth.truth_reactor.shape[-1])
-            fixed_spread = flat.max(axis=0) - flat.min(axis=0)
-        with np.load(pred_path) as preds:
-            for set_name in EVAL_SETS:
-                if set_name not in preds.files:
-                    continue
-                truth = _truth_for(set_name, cfg, data_dir)
-                if truth is None:
-                    continue
-                pred = preds[set_name]
-                n = min(len(pred), len(truth.truth_reactor))
-                metrics = state_metrics(truth.truth_reactor[:n], pred[:n])
-                tracks = track_summary(metrics)
-                fixed = state_metrics(truth.truth_reactor[:n], pred[:n], spread=fixed_spread)
-                tracks_fixed = track_summary(fixed)
-                rows.append(
-                    {
-                        "run_id": summary["run_id"],
-                        "model": summary["model"],
-                        "arch": summary["arch"],
-                        "curriculum": summary["curriculum"],
-                        "noise": summary["noise"],
-                        "profile": summary["profile"],
-                        "eval_set": set_name,
-                        "steps": summary["steps"],
-                        "train_seconds": summary["train_seconds"],
-                        "n_parameters": summary["n_parameters"],
-                        "track_a_nrmse": tracks["track_a_measured"]["nrmse"],
-                        "track_a_r2": tracks["track_a_measured"]["r2"],
-                        "track_a_mae": tracks["track_a_measured"]["mae"],
-                        "track_b_nrmse": tracks["track_b_unmeasured"]["nrmse"],
-                        "track_b_r2": tracks["track_b_unmeasured"]["r2"],
-                        "track_b_mae": tracks["track_b_unmeasured"]["mae"],
-                        "track_a_nrmse_fixed": tracks_fixed["track_a_measured"]["nrmse"],
-                        "track_b_nrmse_fixed": tracks_fixed["track_b_unmeasured"]["nrmse"],
-                        "final_physics_loss": summary.get("final_losses", {}).get("physics"),
-                        "per_component": tracks["per_component"],
-                    }
-                )
+        rows.extend(score_run(run_dir, data_dir, extra_windows))
     return rows
 
 
+def truth_plant(meta: Mapping[str, Any]) -> Bsm1Plant:
+    """The plant that generated a dataset, rebuilt from the dataset meta.
+
+    Evaluation side only: a truth plant with overridden kinetics comes from
+    ``src.asm1.truth_plants`` (plan G2), which training and observer code
+    never import.
+    """
+    params = meta.get("parameters")
+    if params is None or dict(params) == dict(vault().parameters):
+        return Bsm1Plant()
+    from ..asm1 import truth_plants
+
+    preset = meta.get("truth_preset", "vault20")
+    if preset in ("bsm1_15c", "graded"):
+        source = truth_plants.truth_vault(preset, float(meta.get("alpha", 1.0)))
+    else:
+        source = truth_plants.override_vault(params)
+    drift = max(
+        abs(float(source.parameters[k]) - float(value))
+        for k, value in params.items()
+        if k in source.parameters
+    )
+    if drift > 1e-12:
+        raise ValueError(
+            "truth preset %r does not reproduce the dataset parameters (max diff %.3g)"
+            % (preset, drift)
+        )
+    return Bsm1Plant(source=source)
+
+
 def dataset_descriptors(raw_dir: Path) -> dict[str, Any]:
-    """Ground-truth dataset properties: effluent quality, limits, influent stats."""
-    plant = Bsm1Plant()
+    """Ground-truth dataset properties: effluent quality, limits, influent stats.
+
+    The plant is rebuilt from each file's own meta, so a truth plant with
+    BSM1 15 C or graded kinetics is described with its own parameters.
+    """
+    from ..data.simulate import SimulationResult
+
     out: dict[str, Any] = {}
     for scenario in ("dry", "rain"):
-        path = raw_dir / ("sim_%s.npz" % scenario)
+        path = Path(raw_dir) / ("sim_%s.npz" % scenario)
         if not path.exists():
             continue
-        from ..data.simulate import SimulationResult
-
         result = SimulationResult.load(path)
+        plant = truth_plant(result.meta)
         q_e = result.q_in - plant.cfg.q_w
         out[scenario] = {
             "effluent": effluent_quality_index(plant, result.t, result.effluent, q_e),
             "influent": result.meta.get("influent_summary", {}),
             "continuity_of_truth": continuity_of_prediction(plant, result.reactor),
+            "truth_preset": result.meta.get("truth_preset", "vault20"),
+            "alpha": result.meta.get("alpha"),
         }
     return out
 
@@ -143,7 +276,7 @@ def write_csv(rows: Iterable[dict[str, Any]], path: Path) -> Path:
     rows = list(rows)
     if not rows:
         raise RuntimeError("No completed runs found - nothing to report")
-    fields = [k for k in rows[0] if k != "per_component"]
+    fields = [k for k in rows[0] if k not in CSV_EXCLUDE]
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
