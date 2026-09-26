@@ -362,12 +362,15 @@ def lab_tables(core: Mapping[str, Any], case: Case, p0: np.ndarray, mask: np.nda
     for family in sorted(set(families)):
         sel = [i for i, f_ in enumerate(families) if f_ == family]
         f_fam = sens.static_fisher(h_lab[sel], r_lab[sel])
+        with_family = summary(f_sens + f_fam)
+        # ig_by_component (added in G7, reporting only): the per-state gain of each assay, for Table T3.
         add.append({"assay": family, "rows": [labels[i] for i in sel],
-                    "delta_J": summary(f_sens + f_fam)["J"] - j_as})
+                    "delta_J": with_family["J"] - j_as, "ig_by_component": with_family["ig_by_component"]})
         leave_out.append({"assay": family,
                           "delta_J": tiers["Al1"]["J"] - summary(f_sens + f_panel - f_fam)["J"]})
+    with_resp = summary(f_sens + f_resp)
     add.append({"assay": "respirometry", "rows": resp_labels,
-                "delta_J": summary(f_sens + f_resp)["J"] - j_as})
+                "delta_J": with_resp["J"] - j_as, "ig_by_component": with_resp["ig_by_component"]})
     return {
         "rel_errors": {**LAB_REL_ERROR, **{"respirometry_" + name: err for name, err in RESPIROMETRY}},
         "rows": labels + resp_labels, "tiers": tiers,
