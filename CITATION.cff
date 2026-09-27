@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+message: "If you use this code or data, cite the archived release and the manuscript."
+type: software
+title: "asm1-kalman-pinn: Kalman filter versus physics-informed neural network for never-measured ASM1 states"
+version: 1.1.0
+date-released: 2026-09-27
+license: MIT
+repository-code: "https://github.com/Jabrex/asm1-kalman-pinn"
+doi: 10.5281/zenodo.22999921
+authors:
+  - family-names: Uygur
+    given-names: Ahmet
+    orcid: "https://orcid.org/0009-0000-2896-0562"
+    affiliation: "Department of Environmental Engineering, Bursa Uludag University, Bursa, Turkey"
+  - family-names: Tariq
+    given-names: Aiman
+    orcid: "https://orcid.org/0000-0003-0369-9091"
+    affiliation: "Department of Civil Engineering, Bursa Uludag University, Bursa, Turkey"
+  - family-names: Uygur
+    given-names: Mustafa Samet
+    orcid: "https://orcid.org/0009-0005-4400-8324"
+    affiliation: "Department of Electrical and Electronics Engineering, Ege University, Izmir, Turkey"
+  - family-names: Alci
+    given-names: Musa
+    orcid: "https://orcid.org/0000-0002-5382-3460"
+    affiliation: "Department of Electrical and Electronics Engineering, Ege University, Izmir, Turkey"
+  - family-names: Deliktas
+    given-names: Babur
+    orcid: "https://orcid.org/0000-0002-4035-4642"
+    affiliation: "Department of Civil Engineering, Bursa Uludag University, Bursa, Turkey"
+  - family-names: Engin
+    given-names: Erkan Zeki
+    orcid: "https://orcid.org/0000-0002-2249-3139"
+    affiliation: "Department of Electrical and Electronics Engineering, Ege University, Izmir, Turkey"
+keywords:
+  - activated sludge model
+  - ASM1
+  - BSM1
+  - state estimation
+  - extended Kalman filter
+  - physics-informed neural network
+  - observability
