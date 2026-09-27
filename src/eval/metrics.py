@@ -32,9 +32,7 @@ from ..asm1.plant import Bsm1Plant
 from ..asm1.vault_loader import vault
 from ..data.sensors import observed_components, unobserved_components
 
-#: BSM1 Table 10 - pollution-unit weighting factors for the EQI.
 EQI_WEIGHTS = {"TSS": 2.0, "COD": 1.0, "NKj": 30.0, "NO": 10.0, "BOD5": 2.0}
-#: BSM1 Table 9 - effluent quality limits.
 EFFLUENT_LIMITS = {"N_tot": 18.0, "COD": 100.0, "S_NH": 4.0, "TSS": 30.0, "BOD5": 10.0}
 
 
@@ -90,9 +88,9 @@ class StateMetrics:
     """Per-component metrics, averaged over the five tanks."""
 
     components: tuple[str, ...]
-    nrmse: np.ndarray   # (14,)
-    r2: np.ndarray      # (14,)
-    mae: np.ndarray     # (14,)
+    nrmse: np.ndarray
+    r2: np.ndarray
+    mae: np.ndarray
 
     def as_dict(self) -> dict[str, dict[str, float]]:
         return {
@@ -142,10 +140,6 @@ def track_summary(metrics: StateMetrics) -> dict[str, dict[str, float]]:
         "per_component": metrics.as_dict(),
     }
 
-
-# --- v1.1 decision metrics --------------------------------------------------
-# All take the same (n, 5, 14) truth/prediction arrays as state_metrics; none of
-# them changes the v1.0 definitions above.
 
 def skill_score(err, err_ref):
     """Skill against a reference: ``1 - err / err_ref`` (1 perfect, 0 no better, < 0 worse)."""
@@ -247,7 +241,6 @@ def error_vs_time(
     return {"t_start": starts, "t_end": ends, "n": counts, "nrmse": values}
 
 
-# --- effluent quality (ground-truth dataset descriptor) --------------------
 def _effluent_terms(plant: Bsm1Plant, effluent: np.ndarray) -> dict[str, np.ndarray]:
     v = plant.vault
     i = {name: v.index(name) for name in v.components}

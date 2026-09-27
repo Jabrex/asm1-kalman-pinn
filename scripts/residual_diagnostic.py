@@ -28,10 +28,10 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.regime_map import parse_cell  # noqa: E402
-from src.train import curriculum as cl  # noqa: E402
-from src.train.curriculum import trailing_average  # noqa: E402
-from src.train.run import RunConfig, Trainer  # noqa: E402
+from scripts.regime_map import parse_cell
+from src.train import curriculum as cl
+from src.train.curriculum import trailing_average
+from src.train.run import RunConfig, Trainer
 
 WINDOWS = {"R0": (0.0, 12.0), "F": (12.0, 14.0)}
 V10_REFERENCE = {"R0": 0.57, "F": "8-9"}
@@ -52,7 +52,7 @@ def load_trainer(run_dir: Path) -> tuple[Trainer, dict[str, Any]]:
 
 def input_series(trainer: Trainer) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """(t, q_in, z_in, tss_ras) over days 0-14, processed as in the final training stage."""
-    ds = trainer.data["dry"]  # the Trainer has already applied the influent view (plan G5)
+    ds = trainer.data["dry"]
     obs = ds.obs.copy()
     window = int(getattr(trainer.cfg, "ras_filter_window", 1))
     if window > 1:

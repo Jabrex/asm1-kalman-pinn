@@ -4,11 +4,14 @@ Synthetic-data study of a physics-informed neural network as a soft sensor for a
 activated-sludge plant, trained with a hierarchical curriculum and benchmarked
 against LSTM baselines.
 
-**To run it: see [RUNBOOK.en.md](RUNBOOK.en.md).** The pipeline has been executed
-end-to-end; `results/` holds the generated datasets, all training runs
-(including the three-seed replication and the ablations), the benchmark tables
-and the figures reported in the accompanying manuscript. The RUNBOOK gives the
-exact order to regenerate everything from scratch.
+**To run it: see [RUNBOOK.en.md](RUNBOOK.en.md).** [FILES.md](FILES.md) says what
+every file does. The pipeline has been executed end-to-end; the generated
+datasets, all training runs (including the three-seed replication and the
+ablations), the estimator outputs, the benchmark tables and the figures reported
+in the accompanying manuscript are archived on Zenodo under the concept DOI
+[10.5281/zenodo.22304281](https://doi.org/10.5281/zenodo.22304281). `results/` is
+not tracked in this repository; download the archive into it or regenerate it
+with the RUNBOOK, which gives the exact order.
 
 ---
 
@@ -216,7 +219,8 @@ src/eval/            metrics, benchmark report
 scripts/             the numbered RUNBOOK entry points
 configs/base.yaml    shared run settings, expanded over the sweep
 tests/               unit tests, including the leakage invariants
-results/             generated data, runs, figures, benchmark tables
+results/             generated data, runs, figures, benchmark tables (not tracked;
+                     Zenodo archive or RUNBOOK regeneration)
 ```
 
 ---

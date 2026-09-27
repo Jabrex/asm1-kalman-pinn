@@ -15,8 +15,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.asm1.plant import Bsm1Plant  # noqa: E402
-from src.asm1.vault_loader import vault  # noqa: E402
+from src.asm1.plant import Bsm1Plant
+from src.asm1.vault_loader import vault
 
 
 def main() -> None:

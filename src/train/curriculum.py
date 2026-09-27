@@ -39,12 +39,12 @@ from ..models.losses import LossWeights
 @dataclass(frozen=True)
 class CurriculumStage:
     name: str
-    dataset: str            # "constant" or "dry"
+    dataset: str
     horizon_days: float
     steps: int
     weights_start: LossWeights
     weights_end: LossWeights
-    smoothing_window: int = 1   # samples in the moving average; 1 disables it
+    smoothing_window: int = 1
 
     def weights_at(self, progress: float) -> LossWeights:
         """Cosine ramp from ``weights_start`` to ``weights_end`` across the stage."""
@@ -61,7 +61,7 @@ class CurriculumStage:
 @dataclass(frozen=True)
 class CurriculumSchedule:
     stages: tuple[CurriculumStage, ...]
-    plateau_patience: int = 0       # 0 disables early stage advance
+    plateau_patience: int = 0
     plateau_rel_tol: float = 1e-3
 
     @property
@@ -92,10 +92,7 @@ class CurriculumSchedule:
         ]
 
 
-#: Final loss weights, reached at the end of the schedule and used throughout by
-#: the no-curriculum runs.
 FINAL_WEIGHTS = LossWeights(data=1.0, physics=1.0, ic=10.0, positivity=1.0, balance=0.1)
-#: Opening weights: physics present but light, data dominant.
 INITIAL_WEIGHTS = LossWeights(data=10.0, physics=0.05, ic=10.0, positivity=1.0, balance=0.0)
 
 
@@ -116,10 +113,8 @@ def hierarchical(
 
     n = len(fractions)
     steps = [int(round(total_steps * f)) for f in fractions]
-    steps[-1] += total_steps - sum(steps)  # absorb rounding
+    steps[-1] += total_steps - sum(steps)
 
-    # Weight ramp waypoints: interpolate each stage boundary between the
-    # initial and final weights, so lambda_physics grows monotonically.
     def waypoint(k: int) -> LossWeights:
         blend = k / n
         mix = {}
@@ -159,12 +154,6 @@ def no_curriculum(total_steps: int = 20000, train_horizon_days: float = 12.0) ->
     )
     return CurriculumSchedule((stage,))
 
-
-# --- single-axis ablations --------------------------------------------------
-# Each variant keeps exactly one of the hierarchical schedule's axes and holds
-# the other three at the single-stage settings, under the same total budget.
-# Together with `hierarchical` and `none` they let the benchmark attribute the
-# curriculum effect to a specific axis instead of the bundle.
 
 def weights_only(total_steps: int, train_horizon_days: float) -> CurriculumSchedule:
     """Only the loss-weight ramp: one stage, full horizon, dry data, no smoothing."""

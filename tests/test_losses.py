@@ -12,10 +12,10 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from src.asm1.plant import Bsm1Config, Bsm1Plant  # noqa: E402
-from src.data.influent import BSM1_TABLE5_FLOW, stabilisation_influent  # noqa: E402
-from src.data.sensors import SENSOR_SET  # noqa: E402
-from src.models.losses import Asm1Loss, KineticAdapter, LossWeights, ObservationOperator  # noqa: E402
+from src.asm1.plant import Bsm1Config, Bsm1Plant
+from src.data.influent import BSM1_TABLE5_FLOW, stabilisation_influent
+from src.data.sensors import SENSOR_SET
+from src.models.losses import Asm1Loss, KineticAdapter, LossWeights, ObservationOperator
 
 TARGETS = tuple(c for c in SENSOR_SET if c.kind != "tss_underflow")
 
@@ -230,7 +230,6 @@ def test_masked_ic_loss_ignores_unmeasured_entries(rig):
     value.backward()
     assert torch.isfinite(z0_pred.grad).all()
 
-    # The masked loss must equal the plain mean over just the sensed entries.
     sensed = torch.as_tensor(mask, dtype=torch.bool).unsqueeze(0)
     expected = torch.mean((z0_pred.detach()[sensed] - z0_true[sensed]) ** 2)
     assert float(value) == pytest.approx(float(expected), rel=1e-12)
@@ -253,7 +252,6 @@ def test_total_reports_every_term(rig):
     assert values["kinetic_prior"] == 0.0
 
 
-# --- v1.1: kinetic params, IC weights, kinetic adapter ------------------------
 def _weighted(plant, operator, **kwargs):
     return Asm1Loss(plant, operator, np.ones(plant.n_components), np.ones(len(TARGETS)),
                     torch.device("cpu"), torch.float64, **kwargs)

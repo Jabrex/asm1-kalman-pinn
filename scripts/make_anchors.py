@@ -20,12 +20,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.asm1.model import Asm1Kinetics  # noqa: E402
-from src.asm1.plant import Bsm1Plant  # noqa: E402
-from src.asm1.vault_loader import vault  # noqa: E402
-from src.data.sensors import ObservationDataset  # noqa: E402
-from src.data.simulate import steady_state_residual, warm_up  # noqa: E402
-from src.observers import anchors as A  # noqa: E402
+from src.asm1.model import Asm1Kinetics
+from src.asm1.plant import Bsm1Plant
+from src.asm1.vault_loader import vault
+from src.data.sensors import ObservationDataset
+from src.data.simulate import steady_state_residual, warm_up
+from src.observers import anchors as A
 
 ENSEMBLE = Path("results/v11/anchors/nominal_ensemble.npz")
 LAB_SEED = 20260923
@@ -54,7 +54,7 @@ def _member(args):
         if not np.all(np.isfinite(reactor)):
             return index, None, math.nan, "non-finite"
         return index, reactor, steady_state_residual(plant, y), ""
-    except Exception as exc:  # noqa: BLE001 - a failed draw is a rejected draw
+    except Exception as exc:
         return index, None, math.nan, "%s: %s" % (type(exc).__name__, exc)
 
 
@@ -93,12 +93,11 @@ def build_anchors(data_dir: Path, names: list[str], out_dir: Path, ensemble_path
 
     source = data_dir / "obs_dry_sigma0p00.npz"
     if not source.exists():
-        # The random-mismatch plants store sigma 0.10 only; index-0 truth is noise-free anyway.
         source = data_dir / "obs_dry_sigma0p10.npz"
     dry = ObservationDataset.load(source)
     preset = str(dry.meta.get("truth_preset", "vault20"))
     alpha = dry.meta.get("alpha")
-    alpha = 1.0 if alpha is None else float(alpha)  # perturbed plants record alpha as null
+    alpha = 1.0 if alpha is None else float(alpha)
     offsteady = float(dry.meta.get("offsteady_days", 0.0))
     z_truth0 = np.asarray(dry.truth_reactor[0], dtype=float)
     y_truth0 = np.asarray(dry.truth_y[0], dtype=float)

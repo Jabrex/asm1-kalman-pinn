@@ -35,7 +35,6 @@ def test_batching(kinetics, sample_state):
     np.testing.assert_allclose(
         kinetics.conversion(batch)[0], kinetics.conversion(sample_state), rtol=1e-12, atol=1e-12
     )
-    # The process rates themselves are elementwise, so those must match exactly.
     np.testing.assert_array_equal(kinetics.rates(batch)[0], kinetics.rates(sample_state))
 
 
@@ -75,7 +74,6 @@ def test_anoxic_growth_is_inhibited_by_oxygen(kinetics, v, sample_state):
     assert kinetics.rates(low)[1] > kinetics.rates(high)[1]
 
 
-# --- kinetic overrides (v1.1) -------------------------------------------------
 def test_rate_parameters_are_the_fifteen_kinetic_constants(kinetics):
     assert kinetics.rate_parameters == ("kh", "KX", "etah", "muH", "etag", "Ks", "bH", "KO_H",
                                         "KNO", "KNH_H", "muA", "bA", "ka", "KO_A", "KNH")

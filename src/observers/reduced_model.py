@@ -16,7 +16,7 @@ from ..asm1.plant import Bsm1Plant
 from ..models.losses import Asm1Loss, ObservationOperator
 from ..train.run import TARGET_CHANNELS
 
-Z_FLOOR = 1e-12  # log floor for supplied states only; data minimum is 3.6e-5
+Z_FLOOR = 1e-12
 RAS_MODES = ("measured", "ideal_settler")
 _F64 = torch.float64
 
@@ -48,7 +48,7 @@ class InputSeries:
         pos = min(max((float(tt) - self.t0) / self.dt, 0.0), self.n - 1.0)
         lo = min(int(np.floor(pos)), self.n - 2)
         w = pos - lo
-        mix = lambda a: (1.0 - w) * a[lo] + w * a[lo + 1]  # noqa: E731
+        mix = lambda a: (1.0 - w) * a[lo] + w * a[lo + 1]
         return mix(self.q), mix(self.z), mix(self.r), None if self.sol is None else mix(self.sol)
 
 
@@ -72,7 +72,6 @@ class ReducedPlantModel:
         self._q_r, self._q_w, self._v1 = float(cfg.q_r), float(cfg.q_w), float(cfg.volumes[0])
         self._tss_factor = float(cfg.tss_factor)
 
-    # -- right-hand sides ---------------------------------------------------
     def _rhs_z(self, z, q, zin, tss, params=None, recycle_solubles=None):
         if self.ras_mode == "ideal_settler":
             tss5 = self._tss_factor * z[:, -1, :].index_select(-1, self._i_tss).sum(-1, keepdim=True)
@@ -98,7 +97,6 @@ class ReducedPlantModel:
         dz = self.rhs(z, q, zin, tss, params).reshape(-1, self.size)
         return (dz / z).reshape(x.shape)
 
-    # -- linearisation ------------------------------------------------------
     def _g(self, x, q, zin, tss, logp, names, base, sol):
         params = ({name: base[i] * torch.exp(logp[i]) for i, name in enumerate(names)}
                   if names else None)
@@ -155,7 +153,6 @@ class ReducedPlantModel:
         field[: self.size] = g.detach().numpy()
         return field, a, b_ras
 
-    # -- integrators --------------------------------------------------------
     def step(self, s, t0: float, h: float, series: InputSeries, names: Sequence[str] = (),
              base=None, substeps: int = 3, input_jacobian: bool = False):
         """Exponential Rosenbrock-Euler, ``s += hs phi1(hs A) g`` per sub-step (midpoint
@@ -208,7 +205,7 @@ class ReducedPlantModel:
 
         def jac(tt, y):
             q, zin, tss, sol = inputs(tt)
-            fn = lambda yy: self._rhs_z(yy.reshape(shape), q, zin, tss, params, sol).reshape(-1)  # noqa: E731
+            fn = lambda yy: self._rhs_z(yy.reshape(shape), q, zin, tss, params, sol).reshape(-1)
             return torch.func.jacrev(fn)(_t(y)).numpy()
 
         sol = solve_ivp(f, (series.t[0], series.t[-1]), np.asarray(z0, dtype=float).reshape(-1),

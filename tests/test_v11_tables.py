@@ -8,13 +8,13 @@ from pathlib import Path
 import pytest
 
 from scripts import v11_tables as vt
-from test_v11_figures import artefacts  # noqa: F401  (shared synthetic artefacts)
+from test_v11_figures import artefacts
 
 REPO = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
-def table_inputs(artefacts, monkeypatch):  # noqa: F811
+def table_inputs(artefacts, monkeypatch):
     monkeypatch.chdir(REPO)
     root = artefacts
     (root / "analysis" / "kinetic_subset.json").write_text(json.dumps({"names": ["muA", "bA", "muH", "bH"]}),
@@ -124,7 +124,6 @@ def test_practitioner_table_on_the_g4_recoverability_file():
         assert len(row) == 6 and (row[2] in channels or row[2] == "none")
 
 
-# -- review fixes (independent G7 review, 2026-09-26) -------------------------------------------------
 def _registry_table(comparisons):
     return {"meta": {}, "rows": [], "crossovers": [], "comparisons": comparisons, "hypotheses": {}}
 

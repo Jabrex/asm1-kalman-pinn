@@ -37,28 +37,17 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 
-#: Directories whose modules run inside the training loop. Globbed, not listed,
-#: so a newly added module is covered automatically instead of silently skipped.
 TRAINING_ROOTS = ("src/train", "src/models", "src/observers")
-#: Observers get their initial state from anchor files only: even ``[0]`` is forbidden.
 OBSERVER_ROOT = "src/observers"
 
-#: Modules that may read ground truth freely: they build the datasets or score
-#: predictions after training. Kept deliberately minimal - a file that needs to
-#: join this list should be a conscious decision, not a default.
 EVALUATION_ALLOWLIST = frozenset({"src/data/sensors.py", "src/eval/report.py"})
 
 TRUTH_NAMES = frozenset({"truth_reactor", "truth_y"})
-#: The noise-free observations. Training must use the noisy ``obs`` instead, or
-#: the reported noise robustness would be a fiction.
 CLEAN_OBSERVATION_NAMES = frozenset({"obs_clean"})
 
 STRICT = os.environ.get("ASM1_STRICT_TESTS", "").strip().lower() not in {"", "0", "false", "no"}
 
 
-# --------------------------------------------------------------------------
-# static layer
-# --------------------------------------------------------------------------
 def _code_tokens(path: Path) -> list[tokenize.TokenInfo]:
     """Real code tokens: comments, docstrings and string literals removed.
 
@@ -112,7 +101,6 @@ def test_tokeniser_sees_through_comments_and_docstrings():
     tokens = _code_tokens(probe)
     strings = {t.string for t in tokens}
     assert "truth_reactor" in strings, "tokeniser lost a real code reference"
-    # The module docstring names truth_reactor too; it must not become a token.
     docstring_mentions = probe.read_text(encoding="utf-8").count("truth_reactor")
     code_mentions = sum(1 for t in tokens if t.string == "truth_reactor")
     assert code_mentions < docstring_mentions, (
@@ -198,9 +186,6 @@ def test_evaluation_helpers_are_kept_out_of_the_graph():
     )
 
 
-# --------------------------------------------------------------------------
-# runtime layer
-# --------------------------------------------------------------------------
 SIGMA_TAG = "0p05"
 
 
@@ -251,8 +236,6 @@ def test_loss_and_gradients_stay_finite_when_hidden_truth_is_poisoned(model):
             data_dir=str(data_dir),
         )
     )
-    # z0 and the output scale were captured in __init__ from truth[0], which is
-    # the supplied boundary condition. Everything after t = 0 is poisoned now.
     for key in ("dry", "constant"):
         _poison(trainer.data[key])
     trainer.train_set = trainer.data["dry"].window(0.0, trainer.cfg.train_end_day)
@@ -339,11 +322,6 @@ def test_observers_stay_finite_when_hidden_truth_is_poisoned(poison_t0):
             assert np.isfinite(arr).all(), "%s/%s became non-finite" % (name, key)
 
 
-# --------------------------------------------------------------------------
-# runtime layer, v1.1 anchor runs: truth poisoned everywhere, t = 0 included
-# --------------------------------------------------------------------------
-#: Valid kinetic names for the cl_pinn_theta probe. Any subset works here; the
-#: pre-registered one comes from results/v11/analysis/kinetic_subset.json.
 THETA_PROBE = ["muA", "bA", "muH", "bH"]
 
 

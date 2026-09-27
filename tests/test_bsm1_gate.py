@@ -60,12 +60,12 @@ def test_compare_applies_the_declared_tolerances():
            "tanks": {str(k): [10.0] * 13 for k in range(1, 6)},
            "report_only_cells": [[5, "S_S"]]}
     reactor = np.full((5, 14), 10.0)
-    reactor[:, comps.index("X_B_H")] = 10.09   # 0.9 % against 1 %
-    reactor[:, comps.index("S_NH")] = 10.19    # 1.9 % against 2 %
-    reactor[:, comps.index("S_ALK")] = 20.0    # report only
-    reactor[4, comps.index("S_S")] = 11.0      # 10 %, listed as report-only
+    reactor[:, comps.index("X_B_H")] = 10.09
+    reactor[:, comps.index("S_NH")] = 10.19
+    reactor[:, comps.index("S_ALK")] = 20.0
+    reactor[4, comps.index("S_S")] = 11.0
     assert compare(ref, reactor, comps)["failures"] == 0
-    reactor[0, comps.index("X_B_A")] = 10.11   # 1.1 % against 1 %
+    reactor[0, comps.index("X_B_A")] = 10.11
     assert compare(ref, reactor, comps)["failures"] == 1
 
 

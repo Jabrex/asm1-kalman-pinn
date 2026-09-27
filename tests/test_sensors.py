@@ -46,7 +46,7 @@ def test_zero_sigma_is_an_exact_passthrough():
 def test_noise_is_multiplicative_and_unbiased(sigma):
     model = SensorModel()
     rng = np.random.default_rng(1234)
-    clean = np.full((200000, 1), 100.0)  # far from zero, so clipping cannot bias it
+    clean = np.full((200000, 1), 100.0)
     noisy, clipped = model.add_noise(clean, sigma, rng)
     assert clipped == 0.0
     assert np.mean(noisy) == pytest.approx(100.0, rel=2e-3)
@@ -61,13 +61,10 @@ def test_clipping_is_reported_when_it_happens():
     assert clipped > 0.0
 
 
-# --------------------------------------------------------------------------
-# v1.1 candidate channels
-# --------------------------------------------------------------------------
-from src.asm1.plant import Bsm1Plant  # noqa: E402
-from src.data.influent import dry_weather  # noqa: E402
-from src.data.sensors import CANDIDATE_CHANNELS, SensorChannel  # noqa: E402
-from src.data.simulate import default_seed, simulate  # noqa: E402
+from src.asm1.plant import Bsm1Plant
+from src.data.influent import dry_weather
+from src.data.sensors import CANDIDATE_CHANNELS, SensorChannel
+from src.data.simulate import default_seed, simulate
 
 
 @pytest.fixture(scope="module")
@@ -103,7 +100,7 @@ def test_linear_channel_is_soluble_cod(short_result, v):
     expected = (short_result.reactor[:, 4, v.index("S_I")]
                 + short_result.reactor[:, 4, v.index("S_S")])
     np.testing.assert_allclose(ds.obs_clean[:, col], expected, rtol=1e-14)
-    np.testing.assert_array_equal(ds.obs[:, col], ds.obs_clean[:, col])  # sigma 0 stays clean
+    np.testing.assert_array_equal(ds.obs[:, col], ds.obs_clean[:, col])
 
 
 def test_sigma_override_applies_only_to_noisy_datasets():

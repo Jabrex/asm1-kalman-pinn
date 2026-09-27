@@ -11,14 +11,14 @@ from pathlib import Path
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # repository root
-from src.data.influent_views import view_dataset  # noqa: E402
-from src.data.sensors import ObservationDataset  # noqa: E402
-from src.observers.ekf import EkfConfig, estimate_r_from_data, ras_log_variance, tune_q  # noqa: E402
-from src.observers.pipeline import resolve_channels  # noqa: E402
-from src.observers.reduced_model import ReducedPlantModel  # noqa: E402
-from src.train.curriculum import trailing_average  # noqa: E402
-from src.train.run import RAS_CHANNEL  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from src.data.influent_views import view_dataset
+from src.data.sensors import ObservationDataset
+from src.observers.ekf import EkfConfig, estimate_r_from_data, ras_log_variance, tune_q
+from src.observers.pipeline import resolve_channels
+from src.observers.reduced_model import ReducedPlantModel
+from src.train.curriculum import trailing_average
+from src.train.run import RAS_CHANNEL
 
 torch.set_num_threads(4)
 GRID = (0.003, 0.01, 0.03, 0.1, 0.3, 1.0, 3.0)
@@ -48,7 +48,6 @@ for crit in ("innovation", "predictive"):
     if crit == "innovation":
         results["table"] = table
         OUT.write_text(json.dumps(results, indent=1), encoding="utf-8")
-        # the table already holds both scores; the predictive choice needs no second pass
         best = min((row for row in table if not row["diverged"]), key=lambda row: row["predictive_score"])
         results["predictive"] = {"q_soluble": best["q_soluble"], "q_particulate": best["q_particulate"],
                                  "on_grid_edge": best["q_soluble"] in (GRID[0], GRID[-1])

@@ -41,7 +41,6 @@ def test_offsteady_start_requires_whole_weeks():
 
 
 def test_full_run_into_v1_raw_is_refused(capsys):
-    # The attribute check fails on the v1.0 script before main() could touch results/raw.
     assert gd.V1_RAW == REPO / "results" / "raw"
     assert gd.main(["--out", str(gd.V1_RAW)]) == 2
     assert "REFUSED" in capsys.readouterr().out

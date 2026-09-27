@@ -33,9 +33,9 @@ class ObserverSpec:
     train_end_day: float = 12.0
     holdout_days: tuple[float, float] = (12.0, 14.0)
     q_mode: str = "tuned"
-    q_fixed: tuple[float, float] | None = None   # (q_soluble, q_particulate) for frozen/fixed
+    q_fixed: tuple[float, float] | None = None
     q_criterion: str = "innovation"
-    q_grid: tuple[float, ...] | None = None      # None: ekf.Q_GRID
+    q_grid: tuple[float, ...] | None = None
     augment: tuple[str, ...] = ()
     q_theta: float = 1e-3
     theta_prior_sd: float = 0.693

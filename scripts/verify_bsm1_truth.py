@@ -35,9 +35,9 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.asm1.plant import Bsm1Plant  # noqa: E402
-from src.asm1.truth_plants import truth_vault  # noqa: E402
-from src.data.simulate import steady_state_residual, warm_up  # noqa: E402
+from src.asm1.plant import Bsm1Plant
+from src.asm1.truth_plants import truth_vault
+from src.data.simulate import steady_state_residual, warm_up
 
 REFERENCE = REPO_ROOT / "tests" / "data" / "bsm1_openloop_steady_state.json"
 DEFAULT_OUT = REPO_ROOT / "results" / "v11" / "bsm1_gate.json"
@@ -127,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     passed = result["failures"] == 0
     payload = {
         "status": "pass" if passed else "fail",
-        "passed": passed,  # read by scripts/write_prereg.py (G6)
+        "passed": passed,
         "wording": PASS_WORDING if passed else FAIL_WORDING,
         "reference": {k: ref[k] for k in ("source", "table", "page", "transcribed_by",
                                           "transcribed_on", "checked_by")},

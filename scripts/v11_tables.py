@@ -25,7 +25,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.regime_map import (  # noqa: E402
+from scripts.regime_map import (
     SENSOR_EXTRA,
     TRACK_B,
     _cell_sort_key,
@@ -35,21 +35,18 @@ from scripts.regime_map import (  # noqa: E402
     parse_cell,
     seed_label,
 )
-from scripts.v11_figures import CLASSES, load_recoverability, normalise_validation  # noqa: E402
+from scripts.v11_figures import CLASSES, load_recoverability, normalise_validation
 
 V10_ROOTS = ("results/runs", "results/runs_seed1", "results/runs_seed2", "results/runs_ablation",
              "results/runs_flowonly", "results/runs_icmask")
-#: Plan section 1.3, item 6: the corrected v1.0 run counts.
 V10_EXPECTED = {"pinn": 36, "lstm": 8, "analytic": 8}
 RECOVERABLE = {"sensor-recoverable": "yes", "partly recoverable": "partly",
                "forcing-slaved": "partly (influent-driven)", "anchor-carried": "no"}
 SUPERSEDED = "v1.0, partial-derivative residual, superseded"
 MIN_GAIN = 0.01
-#: Pre-registered spread of the nominal kinetic ensemble behind the As anchor (plan section 5).
 ANCHOR_SIGMA_LOG = 0.6
 
 
-# -- rendering --------------------------------------------------------------------------
 def latex_escape(text: Any) -> str:
     s = str(text)
     for a, b in (("\\", "\\textbackslash{}"), ("&", "\\&"), ("%", "\\%"), ("_", "\\_"), ("#", "\\#")):
@@ -124,7 +121,6 @@ def generic_table(path: Path, caption: str, label: str) -> dict[str, Any]:
             "caption": caption, "label": label, "sources": [str(path)]}
 
 
-# -- main-text tables -------------------------------------------------------------------
 def kinetic_names(path: Path) -> list[str]:
     obj = json.loads(Path(path).read_text(encoding="utf-8"))
     names = obj if isinstance(obj, list) else (obj.get("names") or obj.get("subset"))
@@ -185,7 +181,6 @@ def t2_regime(table: dict[str, Any], commit: str) -> dict[str, Any]:
 def _majority_class(classes: list[str]) -> str:
     counts = Counter(classes)
     top = max(counts.values())
-    # Ties go to the less recoverable class: the practitioner reads the cautious answer.
     return max((c for c in counts if counts[c] == top), key=CLASSES.index)
 
 
@@ -201,7 +196,6 @@ def t3_practitioner(rec: dict[str, Any]) -> dict[str, Any]:
         for ch in full["channels"]:
             drop = by_set.get(frozenset(full["channels"]) - {ch})
             if drop is not None:
-                # mean over tanks, the scale of the assay gains below (MIN_GAIN applies to both)
                 losses[ch] = float(np.mean(np.array(full["per_state_ig"][comp]) - np.array(drop["per_state_ig"][comp])))
         probe = max(losses, key=losses.get) if losses and max(losses.values()) >= MIN_GAIN else "none"
         gains = {a["assay"] + " (" + a["tier"] + ")": float(a["ig_gain"].get(comp, 0.0)) for a in rec["lab_assays"]}
@@ -223,7 +217,6 @@ def t3_practitioner(rec: dict[str, Any]) -> dict[str, Any]:
             "sources": ["results/v11/analysis/recoverability_%s.json" % rec["tag"]]}
 
 
-# -- Supplementary tables -----------------------------------------------------------------
 def si_components(table: dict[str, Any], sigma: float, window: str) -> dict[str, Any]:
     rows = [[cell_label(r["cell"]), r["estimator"], r["n"], seed_label(r) or ""] + [r["per_component_fixed"][c] for c in TRACK_B]
             for r in table["rows"] if abs(r["sigma"] - sigma) < 1e-9 and r["window"] == window and "per_component_fixed" in r]
@@ -392,7 +385,6 @@ def run_counts(v10_roots: tuple[str, ...], v11_root: Path, ledger: Path) -> dict
                        "and v1.1.", "sources": list(v10_roots) + [str(v11_root), str(ledger)], "total_eq": total_eq}
 
 
-# -- number registry ----------------------------------------------------------------------
 def numbers_registry(table: dict[str, Any], residual: dict[str, Any] | None, fig_sources: dict[str, Any] | None,
                      validation: dict[str, Any] | None, counts: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
@@ -413,8 +405,6 @@ def numbers_registry(table: dict[str, Any], residual: dict[str, Any] | None, fig
     for i, c in enumerate(table["crossovers"]):
         put("alpha_star.%s.%s_%s.sigma%.2f.%s" % (c["window"], c["influent"], c["anchor"], c["sigma"], c["estimator"]),
             c["alpha_star"], "results/v11/regime_table.json", "crossovers[%d].alpha_star" % i)
-    # wtl.*: registered comparisons with three-seed PINN rows (they decide); .labelled: two-seed or one-seed rows
-    # and the added LSTM rule; wtl_reference.*: the outcome the rule would give against more-information rows.
     wtl: dict[str, Counter] = {}
     for c in table["comparisons"]:
         kind = comparison_kind(c)
@@ -508,7 +498,6 @@ def main(argv: list[str] | None = None) -> None:
                                       else root / "analysis" / "recoverability_k100.json")
     validation_path = Path(args.validation)
     if not validation_path.exists():
-        # H6 is a registered hypothesis (Section 3); it is never dropped silently.
         raise FileNotFoundError("validation file %s not found; run scripts.recoverability_validation" % validation_path)
     validation = normalise_validation(json.loads(validation_path.read_text(encoding="utf-8")))
     validation["source"] = str(validation_path).replace("\\", "/")

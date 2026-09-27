@@ -17,7 +17,7 @@ from ..asm1.vault_loader import Asm1Vault
 
 Z_FLOOR = 1e-12
 LOG_VAR_FLOOR = 1e-12
-PANEL_TANKS = (0, 4)  # tanks 1 and 5
+PANEL_TANKS = (0, 4)
 
 
 def _column(vault: Asm1Vault, quantity: str) -> np.ndarray:

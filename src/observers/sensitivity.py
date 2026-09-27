@@ -50,9 +50,9 @@ def _np(a: Any) -> np.ndarray:
 class InputTrajectory(NamedTuple):
     """Known inputs on the sample grid: influent flow, composition and RAS TSS."""
 
-    q_in: np.ndarray     # (n,)   m3/d
-    z_in: np.ndarray     # (n, 14) g/m3
-    tss_ras: np.ndarray  # (n,)   g SS/m3
+    q_in: np.ndarray
+    z_in: np.ndarray
+    tss_ras: np.ndarray
 
     def at(self, t: np.ndarray, tt: float) -> tuple[float, np.ndarray, float]:
         """Linear interpolation in time, as the observers' input series do."""
@@ -178,7 +178,6 @@ def cumulative_input_response(phis: np.ndarray, gammas: np.ndarray) -> np.ndarra
     return g
 
 
-# -- measurements -------------------------------------------------------------
 def log_measurement_rows(z_traj: np.ndarray, channels: Sequence[Any], components: Sequence[str]) -> np.ndarray:
     """``d log y_j / d x`` along a trajectory; returns ``(n, m, 70)``.
 
@@ -221,7 +220,6 @@ def log_noise_variance(channels: Sequence[Any], sigma: float) -> np.ndarray:
     return np.asarray(out)
 
 
-# -- Fisher information and posterior -----------------------------------------
 def channel_fisher(phis: np.ndarray | None, h_j: np.ndarray, r_j: float,
                    cumulative: np.ndarray | None = None) -> np.ndarray:
     """Initial-state Fisher information of one channel over the window.
@@ -362,7 +360,6 @@ def direction_information_gain(p_post: np.ndarray, p0: np.ndarray, u: np.ndarray
     return float(1.0 - np.sqrt((u @ p_post @ u) / (u @ prior @ u)))
 
 
-# -- start-up memory, slow modes, influent forcing ----------------------------
 def self_sensitivity_decay(phis: np.ndarray, t: np.ndarray,
                            cumulative: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
     """1/e decay time of the self-sensitivity of each (tank, component).
@@ -476,12 +473,10 @@ def forcing_share(tl: TangentLinear, p0: np.ndarray, zin_rel_sd: float = 0.10,
     return {"share": share.reshape(N_TANKS, -1), "var_forcing": var_forcing, "var_initial": var_initial}
 
 
-# -- kinetic identifiability ----------------------------------------------------
-#: Pre-registered class thresholds (strategic plan section 5; frozen at gate D4).
 CLASS_RULES: Mapping[str, float] = {
-    "ig_sensor": 0.5,          # sensor-recoverable if IG >= 0.5
-    "tau_anchor_days": 6.0,    # anchor-carried if tau > 6 d and IG < 0.5
-    "share_forcing": 0.5,      # forcing-slaved if forcing share > 0.5 and tau < 1 d
+    "ig_sensor": 0.5,
+    "tau_anchor_days": 6.0,
+    "share_forcing": 0.5,
     "tau_forcing_days": 1.0,
 }
 CLASS_NAMES = ("sensor-recoverable", "anchor-carried", "forcing-slaved", "partly recoverable")
@@ -575,7 +570,6 @@ def d_optimal_subset(f_theta: np.ndarray, k: int = 4, max_ci: float = 20.0,
     return {"best": best, "ranking": ranked, "n_admissible": len(admissible), "n_candidates": len(rows)}
 
 
-# -- classification and the ideal-settler variant -----------------------------
 def classify_states(ig: np.ndarray, tau: np.ndarray, share: np.ndarray,
                     rules: Mapping[str, float] = CLASS_RULES) -> np.ndarray:
     """Pre-registered class per (tank, component), rules applied in order."""

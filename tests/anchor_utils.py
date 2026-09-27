@@ -11,7 +11,6 @@ from pathlib import Path
 
 import numpy as np
 
-#: Components a sensor measures directly; given a tight rel_std in "graded" anchors.
 MEASURED = ("S_O", "S_NH", "S_NO")
 
 

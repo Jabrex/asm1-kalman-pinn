@@ -49,10 +49,10 @@ from scipy.stats import spearmanr
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.asm1.vault_loader import vault  # noqa: E402
-from src.data.sensors import unobserved_components  # noqa: E402
-from src.eval.metrics import gap_closed, per_tank_nrmse, skill_score, state_metrics  # noqa: E402
-from src.eval.report import (  # noqa: E402
+from src.asm1.vault_loader import vault
+from src.data.sensors import unobserved_components
+from src.eval.metrics import gap_closed, per_tank_nrmse, skill_score, state_metrics
+from src.eval.report import (
     LEVEL_COMPONENTS,
     TOLERANCE_COMPONENTS,
     save_figure,
@@ -68,7 +68,6 @@ STATE_WINDOWS = ("R0", "F")
 PERSISTENCE = "persistence"
 REFERENCE = "ode_openloop_reduced"
 PINN_MODELS = ("cl_pinn", "pinn", "cl_pinn_theta")
-#: Rows that use information the PINN does not get; reported, never winners.
 MORE_INFORMATION = ("ekf_online", "ode_openloop_full")
 ESTIMATOR_ORDER = (
     "persistence", "ode_openloop_reduced", "ode_openloop_full", "lstm_v10", "lstm",
@@ -101,10 +100,8 @@ DATA_DIR_BY_K = {
 INFLUENT_TAG = {"exact": "ie", "composite": "ic", "composite_biased": "ib"}
 INFLUENT_ORDER = ("ie", "ic", "ib")
 ANCHOR_ORDER = ("a0", "as", "al1", "al2")
-#: Observer summary keys copied as diagnostics (q_table, the 49-entry tuning scan, stays in summary.json).
 DIAGNOSTIC_KEY = re.compile(r"^(q_(?!table)|selected_q|r_|nis|log_?lik|diverg|finite|ieks_|n_measured)",
                             re.IGNORECASE)
-#: Divergence (Section 5): non-finite estimate, self-flagged, or mean NIS over days 0-12 > 3 x channels.
 NIS_FACTOR = 3.0
 SEED_SUFFIX = re.compile(r"_seed(\d+)$")
 REALISATION = re.compile(r"_r(\d{2})$")
@@ -112,8 +109,6 @@ KCELL = re.compile(
     r"^k(?P<k>\d{3})(?P<off>_?off)?_(?P<i>ie|ic|ib)_(?P<a>a0|as|al1|al2)(?:_(?P<extra>.+))?$"
 )
 SIGMA_IN_NAME = re.compile(r"_sigma(\d+)p(\d{2})")
-#: Sensor cells (E3 variants): persistence and the open loop do not read the dropped or added
-#: channels, so they come from the base cell; the ideal-settler cell borrows persistence only.
 SENSOR_EXTRA = re.compile(r"^(drop|add)-")
 RAND = re.compile(r"^rand(?P<idx>\d{2,3})_ie_a0$")
 RULE = (
@@ -126,7 +121,6 @@ RULE = (
     "information and are never winners; two-seed and one-seed PINN rows are labeled and do not "
     "decide H1-H7."
 )
-#: Hypothesis settings (Section 3): window R0, sigma 0.10, realisation 0, the primary metric.
 H_WINDOW = "R0"
 H_SIGMA = 0.10
 FORCING_COMPONENTS = ("S_S", "X_S", "S_ND", "X_ND", "S_I")
@@ -138,7 +132,6 @@ _COMPONENTS = vault().components
 B_IDX = [_COMPONENTS.index(c) for c in TRACK_B]
 
 
-# -- cells and estimators -----------------------------------------------------
 def parse_cell(dirname: str) -> tuple[dict[str, Any], int | None]:
     """Split a cell directory name into its grid coordinates and a seed suffix."""
     seed = None
@@ -278,7 +271,6 @@ def discover(root: Path, legacy_lstm: Path | None = None) -> list[RunRef]:
                 run_info, label = info, estimator_label(summary)
                 variant = summary.get("variant") or ""
                 if family == "pinn" and variant:
-                    # E3: the variant's sensor set is the observer cell <cell>_<variant>.
                     run_info, _ = parse_cell("%s_%s" % (info["cell"], variant))
                     label = estimator_label(summary, with_variant=False)
                 refs.append(RunRef(family, run_info, run_dir, data_dir_for(summary, info), summary,
@@ -314,7 +306,7 @@ def failed_runs(root: Path) -> list[dict[str, Any]]:
         for error in sorted(base.glob("*/*/error.txt")):
             run_dir = error.parent
             if "__crash" in run_dir.name:
-                continue  # an infrastructure attempt that was rerun (infrastructure_crashes)
+                continue
             if (run_dir / "summary.json").exists() and (run_dir / "predictions.npz").exists():
                 continue
             info, seed = parse_cell(run_dir.parent.name)
@@ -334,7 +326,6 @@ def failed_runs(root: Path) -> list[dict[str, Any]]:
     return out
 
 
-# -- scoring --------------------------------------------------------------------
 def score_refs(refs: list[RunRef], metric: str) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for ref in refs:
@@ -361,7 +352,6 @@ def score_refs(refs: list[RunRef], metric: str) -> list[dict[str, Any]]:
                 "value": value,
                 "diverged": reason,
                 "failed": False,
-                # Section 9: a diverged or failed run loses to every comparator.
                 "decision_value": math.inf if reason else value,
                 "level_error": {c: row["level_error_%s" % c] for c in LEVEL_COMPONENTS},
                 "tol10": {c: row["tol10_%s" % c] for c in TOLERANCE_COMPONENTS},
@@ -491,8 +481,6 @@ def attach_references(rows: list[dict[str, Any]]) -> None:
         p_cell, ref_cell = reference_cell(parse_cell(r["cell"])[0])
         persist = index.get((p_cell, r["sigma"], PERSISTENCE, r["window"]))
         if persist is None:
-            # Persistence holds the anchor mean and never reads a sensor, so its
-            # content is identical at every sigma (make_baselines docstring).
             persist = next((p for p in rows if p["cell"] == p_cell and p["estimator"] == PERSISTENCE
                             and p["window"] == r["window"]), None)
         ref = index.get((ref_cell, r["sigma"], REFERENCE, r["window"]))
@@ -563,7 +551,6 @@ def _compare_core(p: dict[str, Any], other: dict[str, Any]) -> tuple[str, str]:
         if p["n"] == 1:
             return single_outcome(p["decision_values"][0], other["decision_values"][0]), "single values"
         return outcome(p["decision_values"], other["decision_values"]), "every seed against one value"
-    # Section 9 covers single-valued rows and two PINN models; the multi-seed LSTM is not covered.
     return outcome(p["decision_values"], other["decision_values"]), ADDED_RULE
 
 
@@ -694,7 +681,6 @@ def parameter_recovery(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for m in sorted(members, key=lambda r: r["seed"]):
             logm = {n: math.log(float(m["learned_multipliers"][n])) for n in names}
             estimates.append({"seed": m["seed"], "log_multiplier": logm,
-                              # Section 3, H3: |ln(multiplier) - ln(truth / vault)| per name (secondary)
                               "abs_log_error": {n: abs(logm[n] - true_log[n]) if true_log[n] is not None else None
                                                 for n in names}})
         median_err = {n: float(np.median([e["abs_log_error"][n] for e in estimates]))
@@ -717,7 +703,6 @@ def realisation_spread(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         extra = sorted((m for m in members if m["realisation"] > 0), key=lambda r: r["realisation"])
         if not extra:
             continue
-        # Sections 2 and 9: the spread over realisations 1-9 sits next to realisation 0, never pooled with it.
         values = np.array([m["value"] for m in extra])
         r0 = [m["value"] for m in members if m["realisation"] == 0]
         r0_value = r0[0] if r0 else None
@@ -769,7 +754,6 @@ def state_entries(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             for (c, s, e, w), v in sorted(groups.items())]
 
 
-# -- hypotheses (PREREGISTRATION.md, Section 3) ------------------------------------------------
 def _find(rows: list[dict[str, Any]], cell: str, estimator: str, window: str = H_WINDOW,
           sigma: float = H_SIGMA) -> dict[str, Any] | None:
     for r in rows:
@@ -782,7 +766,6 @@ def _versus(a: dict[str, Any] | None, b: dict[str, Any] | None) -> dict[str, Any
     if a is None or b is None:
         return {"outcome": "missing", "rule": None, "a": None, "b": None}
     if a["failed"] or a["diverged"] or b["failed"] or b["diverged"]:
-        # Section 9: a diverged or failed run loses; a failed comparator leaves the cell undecided.
         result, rule = compare_rows(a, b)
     elif is_pinn_row(a) and is_pinn_row(b):
         result, rule = compare_rows(a, b)
@@ -804,19 +787,16 @@ def hypotheses(rows: list[dict[str, Any]], crossover_rows: list[dict[str, Any]],
     """H1-H5 and H7 evaluated as written in Section 3 (H6: scripts/recoverability_validation.py)."""
     out: dict[str, Any] = {"window": H_WINDOW, "sigma": H_SIGMA, "realisation": 0,
                            "note": "Each test uses its registered cells; the outcome rules are those of Section 9."}
-    # H1: smoother at least as accurate as the CL-PINN at the true kinetics.
     h1 = {}
     for cell in ("k000_ie_a0", "k000_ic_a0"):
         v = _versus(_find(rows, cell, "cl_pinn"), _find(rows, cell, "eks"))
         v["status"] = {"loss": "supported", "win": "refuted", "tie": "undecided"}.get(v["outcome"], "not decided")
         h1[cell] = v
     statuses = {v["status"] for v in h1.values()}
-    # Section 3 gives H1 a word per cell; a single word is reported only when both cells agree.
     out["H1"] = {"cells": h1, "status": statuses.pop() if len(statuses) == 1 else "differs by cell",
                  "status_basis": "per cell (Section 3); one word only when the cells agree",
                  "summary": "; ".join("%s: CL-PINN vs EKS %s (%s)" % (c, v["outcome"], v["status"])
                                       for c, v in h1.items())}
-    # H2: information-matched open loop falls behind persistence between alpha 0.25 and 0.75.
     cross = next((c for c in crossover_rows if (c["influent"], c["anchor"], c["window"], c["estimator"])
                   == ("ie", "a0", H_WINDOW, REFERENCE) and abs(c["sigma"] - H_SIGMA) < 1e-9), None)
     if cross is None:
@@ -827,7 +807,6 @@ def hypotheses(rows: list[dict[str, Any]], crossover_rows: list[dict[str, Any]],
                      "status": "supported" if inside else "not supported",
                      "summary": "alpha* = %s (%s); supported if %.2f < alpha* < %.2f"
                                 % (_fmt(cross["alpha_star"]), cross["status"], *H2_RANGE)}
-    # H3: joint state-parameter estimation at K1-Ie-A0.
     aug = _versus(_find(rows, "k100_ie_a0", "eks_aug"), _find(rows, "k100_ie_a0", "eks"))
     theta = _versus(_find(rows, "k100_ie_a0", "cl_pinn_theta"), _find(rows, "k100_ie_a0", "cl_pinn"))
     tie = _versus(_find(rows, "k100_ie_a0", "cl_pinn_theta"), _find(rows, "k100_ie_a0", "eks_aug"))
@@ -851,7 +830,6 @@ def hypotheses(rows: list[dict[str, Any]], crossover_rows: list[dict[str, Any]],
                  "status": status3,
                  "summary": "Aug. EKS vs EKS %s; PINN-theta vs CL-PINN %s; PINN-theta vs Aug. EKS %s (expected tie)"
                             % (aug["outcome"], theta["outcome"], tie["outcome"])}
-    # H4: the laboratory panel at K.5-Ic (or K1-Ic before gate D3) helps both families.
     if realistic_k is None:
         out["H4"] = {"status": "not decided", "summary": "no realistic cells found"}
     else:
@@ -881,7 +859,6 @@ def hypotheses(rows: list[dict[str, Any]], crossover_rows: list[dict[str, Any]],
                      "summary": "; ".join("%s Al1 vs As %s, rho(tau, reduction) %s"
                                           % (e, fam[e]["outcome"], _fmt(fam[e].get("spearman_tau_vs_reduction"), "%+.2f"))
                                           for e in fam)}
-    # H5: composite influent costs more for forcing-slaved states than for biomass inventories.
     fam5 = {}
     undecided5 = []
     ie, ic = _find(rows, "k000_ie_a0", "eks"), _find(rows, "k000_ic_a0", "eks")
@@ -917,7 +894,6 @@ def hypotheses(rows: list[dict[str, Any]], crossover_rows: list[dict[str, Any]],
                  "status": status5, "not_decided_because": undecided5,
                  "summary": "; ".join("%s: forcing %.3g vs biomass %.3g" % (e, v["ratio_forcing"], v["ratio_biomass"])
                                       for e, v in fam5.items())}
-    # H7: the CL-PINN beats the single-stage PINN at K0-Ie-A0 (seed-paired).
     v7 = _versus(_find(rows, "k000_ie_a0", "cl_pinn"), _find(rows, "k000_ie_a0", "pinn"))
     status7 = "supported" if v7["outcome"] == "win" else (
         "not decided" if v7["outcome"] in ("not_decided", "missing") else "not supported")
@@ -1064,7 +1040,6 @@ def score(root: Path, legacy_lstm: Path | None, metric: str,
         raise SystemExit("no scored runs under %s" % root)
     job_errors = observer_job_errors(root)
     if job_errors:
-        # A failed observer job leaves no run directory to score; refuse rather than drop it (Section 11).
         raise ValueError("failed observer jobs must be reported, not dropped: %s" % ", ".join(job_errors))
     failed = failed_runs(root)
     records = score_refs(refs, metric) + failed_records(failed)
@@ -1117,13 +1092,9 @@ def write_outputs(result: dict[str, Any], out_dir: Path) -> list[Path]:
     return paths
 
 
-# -- heatmap (Fig. 6, the Supplementary map and the graphical-abstract panel) ------
 WINDOW_TEXT = {"R0": "days 0\u201312", "R2": "days 2\u201312", "F": "days 12\u201314"}
-#: Column names of the narrow graphical-abstract panel.
 GA_TEXT = {"persistence": "Persistence", "ode_openloop_reduced": "Open loop", "cl_pinn": "CL-PINN", "eks": "EKS",
            "eks_aug": "Aug. EKS"}
-#: Heatmap slot of the planned WER graphical abstract (plan Task 8.15: 16 x 9 cm canvas, heatmap 7.1 x 6.9 cm);
-#: the current paper/graphical_abstract.tex is the superseded C&CE version.
 GA_SIZE_IN = (7.1 / 2.54, 6.9 / 2.54)
 
 
@@ -1230,7 +1201,7 @@ def plot_heatmap(table: dict[str, Any], png_path: Path, sigma: float = 0.10, win
                 for j, estimator in enumerate(estimators):
                     row = rows_here.get((cell, estimator))
                     if row is None:
-                        continue  # grey: not run in this cell
+                        continue
                     val = grid[i, j]
                     bad = bool(row.get("failed") or row.get("diverged"))
                     if not np.isfinite(val):
@@ -1288,7 +1259,6 @@ def plot_heatmap(table: dict[str, Any], png_path: Path, sigma: float = 0.10, win
 
 
 GA_ESTIMATORS = ("persistence", "ode_openloop_reduced", "cl_pinn", "eks", "eks_aug")
-#: Supplementary map: all grid cells, split by kinetics so that each page stays legible.
 SI_PARTS = (("k000-k025", ("000", "025")), ("k050-k100", ("050", "075", "100")))
 
 

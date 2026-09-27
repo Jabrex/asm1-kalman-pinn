@@ -23,22 +23,20 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.pyplot as plt
 
-import sys  # noqa: E402
+import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.eval.report import save_figure  # noqa: E402
+from src.eval.report import save_figure
 
 RUNS = Path("results/runs")
 FIGURES = Path("results/figures")
 SIGMAS = ("0p00", "0p05", "0p10", "0p15")
-# Shades of the Blues / Oranges colormaps, light -> dark = clean -> noisy.
 SHADES = (0.40, 0.60, 0.78, 0.95)
 LINE_WIDTH = 1.6
 
-# (curriculum run prefix, single-stage run prefix, loss description)
 FAMILIES = (
     ("cl_pinn", "pinn", "loss = data + physics + IC + positivity + balance"),
     ("cl_lstm", "lstm", "loss = data term only (no physics)"),

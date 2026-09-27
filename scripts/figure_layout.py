@@ -36,12 +36,9 @@ from matplotlib.text import Text
 from matplotlib.transforms import Bbox
 
 MM = 1 / 25.4
-#: One journal column (Wiley's minimum artwork width is 80 mm; WER reduces figures to 75 mm).
 COLUMN_IN = 85 * MM
-#: Full page width (Wiley's maximum is 180 mm).
 DOUBLE_IN = 178 * MM
 MIN_FONT_PT = 7.0
-#: Overlap below this depth (points) counts as touching, not colliding.
 TOLERANCE_PT = 0.5
 
 RC = {
@@ -68,7 +65,7 @@ RC = {
     "legend.frameon": False,
     "legend.handlelength": 1.6,
     "legend.columnspacing": 1.2,
-    "pdf.fonttype": 42,  # embedded TrueType, not Type 3
+    "pdf.fonttype": 42,
     "ps.fonttype": 42,
 }
 
@@ -82,7 +79,6 @@ def print_style() -> Iterator[None]:
         yield
 
 
-# -- geometry -------------------------------------------------------------------------------------------
 def _rect(bb) -> np.ndarray:
     return np.array([[bb.x0, bb.y0], [bb.x1, bb.y0], [bb.x1, bb.y1], [bb.x0, bb.y1]], dtype=float)
 
@@ -93,14 +89,12 @@ def _text_polygon(t: Text, renderer) -> np.ndarray:
     rot = t.get_rotation() % 180.0
     if min(rot, 180.0 - rot) < 1.0 or abs(rot - 90.0) < 1.0:
         return _rect(bb)
-    # matplotlib's own unrotated layout box (same line height and descent as the drawn one) ...
     original = t.get_rotation()
     t.set_rotation(0)
     try:
         flat = t.get_window_extent(renderer)
     finally:
         t.set_rotation(original)
-    # ... rotated about the centre of the drawn box, which is the centre of the rotated rectangle
     c = np.array([(bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2])
     th = math.radians(rot)
     u = np.array([math.cos(th), math.sin(th)]) * flat.width / 2
@@ -218,7 +212,6 @@ def _visible_segments(xy: np.ndarray, box) -> list[tuple[np.ndarray, np.ndarray]
     return segs
 
 
-# -- what is drawn --------------------------------------------------------------------------------------
 def _drawn_texts(fig) -> list[Text]:
     """Texts the renderer actually draws (tick pools hold undrawn, stale labels)."""
     drawn: list[Text] = []
@@ -351,7 +344,6 @@ def _data_hit(ax, region: np.ndarray, renderer, with_areas: bool) -> tuple[str, 
     return None
 
 
-# -- the check ------------------------------------------------------------------------------------------
 def check_figure(fig, min_font: float = MIN_FONT_PT, tolerance_pt: float = TOLERANCE_PT) -> list[str]:
     """Every text-layout problem of ``fig`` at its saved size, as readable strings (empty = clean).
 
@@ -375,7 +367,6 @@ def check_figure(fig, min_font: float = MIN_FONT_PT, tolerance_pt: float = TOLER
                 or p[:, 1].max() > height + tol:
             issues.append("outside the canvas (cut off): '%s'" % _label(t))
 
-    # text against text
     boxes = [(t, polys[id(t)]) for t in texts]
     for i in range(len(boxes)):
         ti, pi = boxes[i]
@@ -387,7 +378,6 @@ def check_figure(fig, min_font: float = MIN_FONT_PT, tolerance_pt: float = TOLER
             if _overlap_depth(pi, pj) > tol:
                 issues.append("text overlaps text: '%s' / '%s'" % (_label(ti), _label(tj)))
 
-    # free text (in any axes or on the figure) against the drawn data of every axes it covers
     figure_texts = [t for t in list(fig.texts) + [getattr(fig, name, None) for name in
                                                    ("_suptitle", "_supxlabel", "_supylabel")]
                     if t is not None and id(t) in polys]
@@ -406,7 +396,6 @@ def check_figure(fig, min_font: float = MIN_FONT_PT, tolerance_pt: float = TOLER
                 issues.append("text on a %s: '%s' / %s" % (hit[0], _label(t), hit[1]))
                 break
 
-    # legends against the data of every axes they cover (bands and images included)
     legends = list(fig.legends) + [ax.get_legend() for ax in fig.axes
                                    if ax.get_legend() is not None and ax.get_legend().get_visible()]
     for leg in legends:

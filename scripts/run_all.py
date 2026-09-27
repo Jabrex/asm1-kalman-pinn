@@ -41,7 +41,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.train.run import MODEL_SPECS, RunConfig, Trainer  # noqa: E402
+from src.train.run import MODEL_SPECS, RunConfig, Trainer
 
 BASE_CONFIG = Path("configs/base.yaml")
 
@@ -166,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
         started = time.perf_counter()
         try:
             summary = Trainer(cfg).train()
-        except Exception:  # noqa: BLE001 - one failed run must not stop the sweep
+        except Exception:
             failures.append(cfg.run_id)
             out_dir.mkdir(parents=True, exist_ok=True)
             (out_dir / "error.txt").write_text(traceback.format_exc(), encoding="utf-8")

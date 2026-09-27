@@ -62,3 +62,25 @@ results/v11/_contract/
 results/v11/_smoke/*/
 results/v11/_smoke_g1/
 results/v11/run_core_inflight.json
+
+# Generated datasets, training runs, estimator outputs, figures and tables.
+# They are archived on Zenodo (see README) and are not tracked here; only the
+# pre-registration probe scripts and their short text outputs stay.
+results/*
+!results/v11/
+results/v11/*
+!results/v11/predating/
+results/v11/predating/*
+!results/v11/predating/*.py
+!results/v11/predating/*.json
+!results/v11/predating/*.txt
+
+# Images and binary model or data files anywhere in the tree
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.pdf
+*.npz
+*.pt

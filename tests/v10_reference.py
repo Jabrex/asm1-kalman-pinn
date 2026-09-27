@@ -17,16 +17,12 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-#: (case name, model, steps). Three steps of the hierarchical schedule leave its
-#: first stage empty (15% of 3 rounds to 0), so a seven-step case covers all
-#: four stages, including the constant-load stage.
 CASES: tuple[tuple[str, str, int], ...] = (
     ("cl_pinn_3", "cl_pinn", 3),
     ("pinn_3", "pinn", 3),
     ("lstm_3", "lstm", 3),
     ("cl_pinn_7", "cl_pinn", 7),
 )
-#: History keys that exist in v1.0; later keys (kinetic_prior, mult_*) are ignored.
 KEYS: tuple[str, ...] = (
     "step", "stage", "lr", "total", "data", "physics", "ic", "positivity", "balance",
 )

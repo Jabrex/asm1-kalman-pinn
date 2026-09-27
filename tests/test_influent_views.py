@@ -18,7 +18,7 @@ from src.data.influent_views import (
 )
 from src.data.sensors import ObservationDataset
 
-GRID = np.linspace(0.0, 14.0, 14 * 96 + 1)  # the 15-minute BSM1 grid
+GRID = np.linspace(0.0, 14.0, 14 * 96 + 1)
 
 
 @pytest.fixture(scope="module")

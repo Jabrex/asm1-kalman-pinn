@@ -39,7 +39,7 @@ REQUIRED_KEYS = (
 DEFAULTS: dict[str, Any] = {
     "ras_input": "filtered",
     "channels": "default",
-    "q_grid": list(Q_GRID),  # seven points since gate D4 (2026-09-24)
+    "q_grid": list(Q_GRID),
     "r_floor": 0.01,
     "tune_window_days": [0.0, 12.0],
     "augment": [],
@@ -170,15 +170,15 @@ def obs_path(data_dir: str | Path, sigma: float, realisation: int = 0, scenario:
 class CellInputs:
     """What every estimator of one (cell, sigma, realisation) receives, days 0-14."""
 
-    t: np.ndarray               # (n,)
-    train: np.ndarray           # (n,) bool, t <= train_end_day
-    q_in: np.ndarray            # (n,)
-    z_in: np.ndarray            # (n, 14) after the influent view
-    y_obs: np.ndarray           # (n, m) noisy measured channels, cell order
+    t: np.ndarray
+    train: np.ndarray
+    q_in: np.ndarray
+    z_in: np.ndarray
+    y_obs: np.ndarray
     channels: tuple[SensorChannel, ...]
-    tss_ras: np.ndarray         # (n,) return-sludge input after the filter or the settler rule
-    z0_mean: np.ndarray         # (5, 14) anchor mean
-    z0_rel_std: np.ndarray      # (5, 14) anchor relative sd
+    tss_ras: np.ndarray
+    z0_mean: np.ndarray
+    z0_rel_std: np.ndarray
 
 
 def prepare_cell_inputs(cfg: Mapping[str, Any], sigma: float, realisation: int = 0,

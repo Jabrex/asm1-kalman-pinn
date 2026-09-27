@@ -23,7 +23,7 @@ from src.train.run import RAS_CHANNEL, TARGET_CHANNELS
 
 REPO = Path(__file__).resolve().parents[1]
 DRY = REPO / "results" / "raw" / "obs_dry_sigma0p10.npz"
-ONE_DAY = 97  # samples: 96 intervals of 15 min
+ONE_DAY = 97
 STRICT = os.environ.get("ASM1_STRICT_TESTS", "").strip().lower() not in {"", "0", "false", "no"}
 
 
@@ -84,7 +84,6 @@ def day(model, dry):
             "m": sens.cumulative_propagators(tl.phis), "solve": solve, "x0": x0}
 
 
-# -- Task 4.1: G3 contract and tangent-linear propagation ------------------------
 def test_reduced_model_contract(model, dry):
     """jacobians -> (J_x, B_ras, B_zin, B_theta) in log-state coordinates (G3)."""
     v = vault()
@@ -171,7 +170,6 @@ def test_log_measurement_rows(day):
     assert sens.log_noise_variance([tss], 0.10) == pytest.approx([np.log1p(0.01)])
 
 
-# -- Task 4.2: Fisher information and posterior ------------------------------------
 def _fisher_parts(day):
     h = sens.log_measurement_rows(day["z"], TARGET_CHANNELS, vault().components)
     r = sens.log_noise_variance(TARGET_CHANNELS, 0.10)
@@ -204,15 +202,15 @@ def test_si_gains_information_only_through_transport(day):
     i_si = [k * 14 + comps.index("S_I") for k in range(5)]
     h, r, parts = _fisher_parts(day)
     f = sum(parts)
-    assert np.abs(h[:, :, i_si]).max() == 0.0                    # no target channel senses S_I
-    assert np.abs(f[i_si]).max() <= 1e-12 * np.abs(f).max()      # nor does S_I act on what they sense
+    assert np.abs(h[:, :, i_si]).max() == 0.0
+    assert np.abs(f[i_si]).max() <= 1e-12 * np.abs(f).max()
     scod = SensorChannel("SCOD_tank5", "linear", tank=4, weights=(("S_I", 1.0), ("S_S", 1.0)),
                          sigma_override=0.20)
     h_s = sens.log_measurement_rows(day["z"], [scod], comps)
     sensed = set(np.nonzero(np.abs(h_s).sum(axis=(0, 1)))[0].tolist())
     assert sensed == {4 * 14 + comps.index("S_I"), 4 * 14 + comps.index("S_S")}
     f_s = sens.channel_fisher(None, h_s[:, 0], sens.log_noise_variance([scod], 0.10)[0], cumulative=day["m"])
-    assert np.all(np.diag(f_s)[i_si] > 0.0)                       # tanks 1-4 reached through transport
+    assert np.all(np.diag(f_s)[i_si] > 0.0)
 
 
 def test_posterior_cov_matches_direct_inverse():
@@ -234,16 +232,15 @@ def test_fisher_eigen_whitens_with_the_prior():
     assert abs(u_sum @ u_split) < 1e-12
 
 
-# -- Task 4.3: start-up memory, slow modes, influent forcing ------------------------
 def test_self_sensitivity_decay_recovers_known_rates():
     t = np.linspace(0.0, 12.0, 1153)
     rates = np.full(70, 0.5)
-    rates[14:28] = 0.05                                   # tank 2 never reaches 1/e in 12 d
+    rates[14:28] = 0.05
     phis = np.stack([np.diag(np.exp(-rates * (t[1] - t[0])))] * (t.size - 1))
     tau, extrap = sens.self_sensitivity_decay(phis, t)
     assert tau[0] == pytest.approx(np.full(14, 2.0), abs=1e-4)
     assert not extrap[0].any()
-    assert tau[1] == pytest.approx(np.full(14, 20.0), rel=1e-9)   # 12 / -ln(exp(-0.6))
+    assert tau[1] == pytest.approx(np.full(14, 20.0), rel=1e-9)
     assert extrap[1].all()
 
 
@@ -291,9 +288,7 @@ def test_finite_difference_jacobian_schemes_on_a_kink():
     assert fwd[1] == pytest.approx([3.0, 1.0], rel=1e-5)
 
 
-# -- Task 4.4: identifiability, classes, ideal settler, leakage guard --------------
 def test_collinearity_index_hand_example():
-    # unit columns (1, 1)/sqrt(2) and (0, 1): Gram [[1, c], [c, 1]] with c = 1/sqrt(2)
     s = np.array([[1.0, 0.0], [1.0, 1.0]])
     assert sens.collinearity_index(s) == pytest.approx(1.0 / np.sqrt(1.0 - 1.0 / np.sqrt(2.0)), rel=1e-12)
     assert sens.collinearity_index(np.eye(3)) == pytest.approx(1.0)
@@ -305,7 +300,7 @@ def test_d_optimal_subset_skips_collinear_pairs():
     f = s.T @ s
     out = sens.d_optimal_subset(f, k=2, max_ci=20.0, names=["a", "b", "c"])
     assert np.linalg.slogdet(f[:2, :2])[1] > max(row["logdet"] for row in out["ranking"])
-    assert out["best"]["names"] == ["b", "c"]            # (a, b) has the largest det but CI near 71
+    assert out["best"]["names"] == ["b", "c"]
     assert out["n_admissible"] == 2 and out["n_candidates"] == 3
 
 

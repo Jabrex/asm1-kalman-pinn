@@ -25,16 +25,12 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
-# Repository layout ---------------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VAULT_DIR = REPO_ROOT / "asm1_cl-pinn"
 VAULT_JSON = VAULT_DIR / "data" / "asm1.json"
 AUDIT_REPORT = VAULT_DIR / "Audit Report.md"
 SOURCE_XLSX = REPO_ROOT / "asm1.xlsx"
 
-# The vault's numeric-stoichiometry column labels use a dot in the biomass names
-# (``X_B.H``) while the component table uses an underscore (``X_B_H``). The vault
-# documents these as aliases of one identity; we normalise on the component form.
 _LABEL_NORMALISE = str.maketrans({".": "_"})
 
 
@@ -70,26 +66,25 @@ class VaultIntegrityError(RuntimeError):
 class Asm1Vault:
     """Immutable view of the audited ASM1 knowledge base."""
 
-    components: tuple[str, ...]          # 14 component code ids, matrix order
+    components: tuple[str, ...]
     component_units: tuple[str, ...]
-    processes: tuple[str, ...]           # 8 process names, matrix row order
-    parameters: Mapping[str, float]      # 25 parameter code_id -> value
-    nu: np.ndarray                       # (8, 14) numeric stoichiometry
-    composition: np.ndarray              # (14, 3) COD / N / Charge
-    conserved: tuple[str, ...]           # ("COD", "N", "Charge")
-    rate_expressions: tuple[str, ...]    # 8 vault ``code_expression`` strings
+    processes: tuple[str, ...]
+    parameters: Mapping[str, float]
+    nu: np.ndarray
+    composition: np.ndarray
+    conserved: tuple[str, ...]
+    rate_expressions: tuple[str, ...]
     json_sha256: str
     source_xlsx_sha256: str
-    audited_residuals: np.ndarray        # (8, 3) as recorded by the vault audit
+    audited_residuals: np.ndarray
     audited_max_residual: float
     residual_tolerance: float
     starred_missing_terms: tuple[str, ...]
 
-    # -- lookup helpers ----------------------------------------------------
     def index(self, component: str) -> int:
         try:
             return self.components.index(component)
-        except ValueError as exc:  # pragma: no cover - programming error
+        except ValueError as exc:
             raise KeyError("Unknown ASM1 component %r" % (component,)) from exc
 
     def indices(self, names: Sequence[str]) -> list[int]:
@@ -98,7 +93,6 @@ class Asm1Vault:
     def p(self, code_id: str) -> float:
         return self.parameters[code_id]
 
-    # -- audit -------------------------------------------------------------
     def continuity_residual(self) -> np.ndarray:
         """``nu @ composition`` via BLAS; shape (8 processes, 3 quantities).
 
@@ -202,9 +196,6 @@ def load_vault(path: Path | str | None = None, *, verify_hash: bool = True) -> A
     if comp_rows != components:
         raise VaultIntegrityError("continuity_composition rows do not match the component table")
 
-    # Rate expressions: the vault stores the original and standardised source
-    # text plus an identical code-safe expression for each. We assert they agree
-    # and then use the code-safe form verbatim.
     rate_expressions: list[str] = []
     for process in payload["processes"]:
         original = process["rates"]["original"]["code_expression"]

@@ -27,8 +27,8 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.v11_plan import ARCH, REPO, SIGMA, SMOKE_ROOT, realistic_k, sigma_tag, smoke_queue  # noqa: E402
-from src.observers.cell_inputs import DEFAULT_TARGETS  # noqa: E402
+from scripts.v11_plan import ARCH, REPO, SIGMA, SMOKE_ROOT, realistic_k, sigma_tag, smoke_queue
+from src.observers.cell_inputs import DEFAULT_TARGETS
 
 REPORT = Path(SMOKE_ROOT) / "smoke_report.json"
 V10_SUMMARY_KEYS = (

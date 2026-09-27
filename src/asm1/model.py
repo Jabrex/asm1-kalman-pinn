@@ -27,11 +27,6 @@ import numpy as np
 
 from .vault_loader import Asm1Vault, vault
 
-# Concentrations are clamped to this floor before entering the rate
-# expressions. Purpose is purely numerical: rho_7 and rho_8 divide by X_B_H and
-# X_S, which can reach zero during transients or during PINN warm-up. The clamp
-# is applied to the values fed to the expressions only, never to the state
-# itself, and is far below any physically meaningful concentration.
 RATE_FLOOR = 1e-12
 
 
@@ -57,7 +52,6 @@ class Asm1Kinetics:
         read = set().union(*(code.co_names for code in self._codes))
         self.rate_parameters: tuple[str, ...] = tuple(n for n in self._params if n in read)
 
-    # -- internals ---------------------------------------------------------
     def _clamped(self, Z: Any) -> Any:
         if _is_torch(Z):
             import torch
@@ -92,12 +86,11 @@ class Asm1Kinetics:
             self._torch_nu[key] = cached
         return cached
 
-    # -- public API --------------------------------------------------------
     def rates(self, Z: Any, overrides: Mapping[str, Any] | None = None) -> Any:
         """Process rates rho for state ``Z`` of shape ``(..., 14)`` -> ``(..., 8)``."""
         ns = self._namespace(Z, overrides)
         env = {"__builtins__": {}}
-        values = [eval(code, env, ns) for code in self._codes]  # noqa: S307 - vault-sourced
+        values = [eval(code, env, ns) for code in self._codes]
         if _is_torch(Z):
             import torch
 
@@ -114,7 +107,6 @@ class Asm1Kinetics:
             return torch.matmul(rho, nu)
         return rho @ nu
 
-    # -- diagnostics -------------------------------------------------------
     def continuity_of_conversion(self, Z: Any) -> Any:
         """COD / N / Charge production implied by ``r``; must be ~0 for any Z.
 

@@ -78,7 +78,7 @@ class Asm1Lstm(nn.Module):
         self, t: torch.Tensor, q_in: torch.Tensor, z_in: torch.Tensor
     ) -> torch.Tensor:
         """``t`` is ``(n, 1)`` on an ordered grid; returns ``(n, n_tanks, n_components)``."""
-        x = self.features.build(t, q_in, z_in).unsqueeze(0)  # (1, n, f)
+        x = self.features.build(t, q_in, z_in).unsqueeze(0)
         out, _ = self.rnn(x)
         raw = self.head(out.squeeze(0)).view(-1, self.n_tanks, self.n_components)
         return self.scale * nn.functional.softplus(raw + _INV_SOFTPLUS_1)

@@ -18,7 +18,6 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
-#: Periods present in the influent generator, in days.
 DEFAULT_PERIODS: tuple[float, ...] = (1.0, 7.0)
 DEFAULT_HARMONICS: tuple[int, ...] = (4, 2)
 
@@ -28,9 +27,6 @@ class FeatureConfig:
     periods: tuple[float, ...] = DEFAULT_PERIODS
     harmonics: tuple[int, ...] = DEFAULT_HARMONICS
     include_influent: bool = True
-    # With include_influent, controls whether the 14-component composition
-    # Z_in(t) is included alongside the flow. False leaves only Q_in(t) - the
-    # signal a real plant actually measures online (revision ablation).
     include_influent_composition: bool = True
 
 
@@ -53,7 +49,7 @@ class FeatureBuilder:
 
     @property
     def n_features(self) -> int:
-        n = 1  # normalised time
+        n = 1
         n += 2 * int(sum(self.cfg.harmonics))
         if self.cfg.include_influent:
             n += 1

@@ -17,8 +17,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts import gpu_ledger  # noqa: E402
-from scripts.v11_plan import HARD_CAP, REPO, V11, core_queue, realistic_k  # noqa: E402
+from scripts import gpu_ledger
+from scripts.v11_plan import HARD_CAP, REPO, V11, core_queue, realistic_k
 
 REQUIRED = ("checkpoint.pt", "predictions.npz", "summary.json", "history.json", "config.yaml")
 ACCEPTED = ("ok", "failed_numeric", "error_logged")

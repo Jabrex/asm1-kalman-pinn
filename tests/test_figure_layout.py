@@ -5,11 +5,11 @@ from __future__ import annotations
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import pytest  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
+import pytest
 
-from scripts import figure_layout as fl  # noqa: E402
+from scripts import figure_layout as fl
 
 
 def _fig(width=fl.COLUMN_IN, height=2.4):
@@ -128,7 +128,6 @@ def test_wrap_keeps_lines_within_the_width():
         plt.close(fig)
 
 
-# -- review fixes (independent check, 2026-09-26) --------------------------------------------------------
 def test_dense_rotated_labels_are_tested_as_rotated_rectangles():
     """Axis-aligned boxes of these 45-degree labels overlap; the rotated labels themselves do not."""
     with fl.print_style():
@@ -139,7 +138,7 @@ def test_dense_rotated_labels_are_tested_as_rotated_rectangles():
         assert fl.check_figure(fig) == []
         renderer = fig.canvas.get_renderer()
         boxes = [fl._rect(t.get_window_extent(renderer)) for t in ax.get_xticklabels()]
-        assert any(fl._overlap_depth(boxes[i], boxes[i + 1]) > 0 for i in range(7))  # the boxes do overlap
+        assert any(fl._overlap_depth(boxes[i], boxes[i + 1]) > 0 for i in range(7))
         plt.close(fig)
 
 
@@ -175,7 +174,7 @@ def test_figure_text_and_text_of_another_axes_are_checked_against_data():
         fig.text(0.55, 0.52, "figure note", ha="center", va="center")
         assert "text on a line" in _kinds(fl.check_figure(fig))
         plt.close(fig)
-        fig, (a1, a2) = plt.subplots(1, 2, figsize=(fl.DOUBLE_IN, 2.4))  # fixed positions: no layout engine
+        fig, (a1, a2) = plt.subplots(1, 2, figsize=(fl.DOUBLE_IN, 2.4))
         a2.plot([0, 1], [0.5, 0.5])
         a2.set_xlim(0, 1)
         a2.set_ylim(0, 1)
@@ -193,8 +192,6 @@ def test_line_width_and_square_marker_outline_count():
         ax.plot([0, 1], [0.5, 0.5], lw=8)
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
-        # 0.5 of the axes height is about 60 pt here; the label's box starts about 3 pt above the line centre,
-        # inside the 4-pt half width of the stroke
         ax.annotate("near a thick line", (0.3, 0.5), xytext=(0, 3), textcoords="offset points", va="bottom")
         assert "text on a line" in _kinds(fl.check_figure(fig))
         plt.close(fig)
@@ -202,7 +199,6 @@ def test_line_width_and_square_marker_outline_count():
         ax.plot([0.5], [0.5], marker="s", ms=20, ls="none")
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
-        # just beyond the inscribed circle (10 pt) but inside the square's corner reach (14 pt)
         ax.annotate("corner", (0.5, 0.5), xytext=(8.5, 8.5), textcoords="offset points", ha="left", va="bottom")
         assert "text on a marker" in _kinds(fl.check_figure(fig))
         plt.close(fig)

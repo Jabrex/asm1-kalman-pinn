@@ -34,9 +34,9 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from src.asm1.vault_loader import vault  # noqa: E402
-from src.data.sensors import ObservationDataset, unobserved_components  # noqa: E402
-from src.eval.metrics import (  # noqa: E402
+from src.asm1.vault_loader import vault
+from src.data.sensors import ObservationDataset, unobserved_components
+from src.eval.metrics import (
     error_vs_time,
     level_error,
     skill_score,
@@ -115,7 +115,6 @@ def main(argv: list[str] | None = None) -> int:
     track_b = list(unobserved_components())
     comps = list(vault().components)
 
-    # Persistence reference per window (noise-independent content).
     with np.load(results / "runs" / "persistence_sigma0p00" / "predictions.npz") as p:
         persist_preds = {k: p[k] for k in p.files}
 
@@ -145,7 +144,6 @@ def main(argv: list[str] | None = None) -> int:
                 "skill_vs_persistence": float(skill_score(s["track_b_nrmse_fixed"], ref["track_b_nrmse_fixed"])),
                 "persistence_track_b_nrmse_fixed": ref["track_b_nrmse_fixed"],
             })
-        # Error against time since the anchor, days 0-14 (R0 then F without the shared t = 12 sample).
         t_all = np.concatenate([model_w["R0"][0], model_w["F"][0][1:]])
         z_all = np.concatenate([model_w["R0"][1], model_w["F"][1][1:]])
         p_all = np.concatenate([model_w["R0"][2], model_w["F"][2][1:]])

@@ -20,13 +20,11 @@ def test_different_seeds_never_share_an_out_dir():
     base = _base()
     dirs = {resolve_paths(base, seed=k)["out_dir"] for k in (0, 1, 2)}
     assert len(dirs) == 3
-    assert base["out_dir"] not in dirs  # the v1.0 seed-0 directory is never reused
+    assert base["out_dir"] not in dirs
     assert resolve_paths(base, seed=1)["out_dir"] == "results/runs_seed1"
     assert resolve_paths(base, seed=1)["seed"] == 1
-    # an explicit --out-dir wins, and --data-dir is passed through
     explicit = resolve_paths(base, seed=2, out_dir="results/v11/x", data_dir="results/raw_k100")
     assert explicit["out_dir"] == "results/v11/x" and explicit["data_dir"] == "results/raw_k100"
-    # no overrides: the YAML is untouched
     assert resolve_paths(base) == base
 
 
@@ -51,7 +49,6 @@ def test_variants_give_distinct_run_ids_and_apply_overrides():
     td = by_id["cl_pinn_sigma0p10_td"]
     assert td.total_derivative is True and td.ras_filter_window == 4 and td.variant == "td"
     rev = by_id["pinn_sigma0p00_td_rev"]
-    # nested block merged, not replaced: the width survives the override
     assert rev.pinn["derivative_mode"] == "reverse" and rev.pinn["hidden_width"] == 128
     assert run_id("cl_pinn", 0.1, "td") == "cl_pinn_sigma0p10_td"
     assert run_id("cl_pinn", 0.1) == "cl_pinn_sigma0p10"

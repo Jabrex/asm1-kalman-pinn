@@ -36,18 +36,6 @@ import numpy as np
 
 from .vault_loader import VAULT_JSON, Asm1Vault, VaultIntegrityError, _sha256, vault
 
-#: BSM1 15 degrees C values that differ from the vault's 20 degrees C set.
-#: Source: Alex et al., "Benchmark Simulation Model no. 1 (BSM1)", IWA Task
-#: Group on Benchmarking of Control Strategies for WWTPs (2018), stoichiometric
-#: and kinetic parameter tables. These values MUST be checked cell by cell
-#: against the report before any data generation; the check is recorded (table,
-#: page, checker) in tests/data/bsm1_openloop_steady_state.json under
-#: "parameter_check", and scripts/generate_data.py refuses to build bsm1_15c or
-#: graded data until scripts/verify_bsm1_truth.parameter_check_problems is empty.
-#: BSM1 has no ammonium switch in rho_1/rho_2, so KNH_H = 0 turns the vault's
-#: ASM2d-sourced switch S_NH/(KNH_H+S_NH) into exactly 1 for S_NH >= 1e-12.
-#: Every other parameter (YH 0.67, YA 0.24, fP 0.08, iXP 0.06, KO_H 0.2,
-#: KNO 0.5, etag 0.8, kh 3.0, KO_A 0.4, KNH 1.0) equals the vault value.
 BSM1_15C: Mapping[str, float] = {
     "muH": 4.0,
     "Ks": 10.0,
@@ -61,16 +49,12 @@ BSM1_15C: Mapping[str, float] = {
     "iXB": 0.08,
 }
 
-#: Interpolated geometrically between the two sets (all strictly positive).
 LOG_INTERP: tuple[str, ...] = ("muH", "Ks", "bH", "KX", "etah", "muA", "bA", "ka")
-#: Interpolated linearly (KNH_H reaches zero, iXB is a mass fraction).
 LIN_INTERP: tuple[str, ...] = ("KNH_H", "iXB")
 
-#: Physical conversion constants: never perturbed or overridden.
 FIXED_CONSTANTS: tuple[str, ...] = (
     "iNO3_N2", "iCOD_NO3", "iCOD_N2", "iCharge_SNHx", "iCharge_SNOx",
 )
-#: Reduction factors that are physically bounded by one.
 ETA_NAMES: tuple[str, ...] = ("etag", "etah")
 
 PRESETS: tuple[str, ...] = ("vault20", "bsm1_15c", "graded")
@@ -94,7 +78,7 @@ def _evaluate(expression: Any, namespace: Mapping[str, float], where: str) -> fl
     if isinstance(expression, (int, float)):
         return float(expression)
     code = compile(str(expression), "<vault:%s>" % where, "eval")
-    return float(eval(code, {"__builtins__": {}}, dict(namespace)))  # noqa: S307 - vault-sourced
+    return float(eval(code, {"__builtins__": {}}, dict(namespace)))
 
 
 def override_vault(parameters: Mapping[str, float]) -> Asm1Vault:
@@ -142,7 +126,7 @@ def override_vault(parameters: Mapping[str, float]) -> Asm1Vault:
             for q, row in enumerate(comp_block["cells"])
         ],
         dtype=np.float64,
-    ).T  # (3, 14) in the vault -> (14, 3) like Asm1Vault.composition
+    ).T
 
     residual = float(np.max(np.abs(nu @ composition)))
     if residual > 1e-12:

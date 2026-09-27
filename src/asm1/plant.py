@@ -35,11 +35,8 @@ import numpy as np
 from .model import Asm1Kinetics
 from .vault_loader import Asm1Vault, vault
 
-# Component groupings, by vault code id ------------------------------------
 SOLUBLE_COMPONENTS = ("S_I", "S_S", "S_O", "S_NO", "S_NH", "S_ND", "S_ALK", "S_N2")
 PARTICULATE_COMPONENTS = ("X_I", "X_S", "X_B_H", "X_B_A", "X_P", "X_ND")
-# BSM1 eq. 45: TSS = (1/fr_COD_SS) * (X_S + X_P + X_I + X_BH + X_BA). X_ND is a
-# nitrogen component and is deliberately excluded from the solids sum.
 TSS_COMPONENTS = ("X_S", "X_P", "X_I", "X_B_H", "X_B_A")
 
 
@@ -47,46 +44,38 @@ TSS_COMPONENTS = ("X_S", "X_P", "X_I", "X_B_H", "X_B_A")
 class Bsm1Config:
     """Plant geometry and operating point. Every field cites its BSM1 source."""
 
-    # Bioreactor - report section 2.3.1
-    volumes: tuple[float, ...] = (1000.0, 1000.0, 1333.0, 1333.0, 1333.0)  # m3
-    kla: tuple[float, ...] = (0.0, 0.0, 240.0, 240.0, 84.0)                # 1/d, open-loop default
-    so_sat: float = 8.0                                                    # g/m3, below eq. 26
+    volumes: tuple[float, ...] = (1000.0, 1000.0, 1333.0, 1333.0, 1333.0)
+    kla: tuple[float, ...] = (0.0, 0.0, 240.0, 240.0, 84.0)
+    so_sat: float = 8.0
 
-    # Flows - report section 2.1 and Table 5
-    q_int: float = 55338.0   # m3/d internal recycle, tank 5 -> tank 1
-    q_r: float = 18446.0     # m3/d sludge recycle (= Q_i,stab)
-    q_w: float = 385.0       # m3/d wastage
+    q_int: float = 55338.0
+    q_r: float = 18446.0
+    q_w: float = 385.0
 
-    # Secondary clarifier - report section 2.3.3 and Table 4
-    settler_area: float = 1500.0      # m2
-    settler_layer_height: float = 0.4  # m
+    settler_area: float = 1500.0
+    settler_layer_height: float = 0.4
     n_layers: int = 10
-    feed_layer: int = 6               # 1-based, counted from the bottom
-    v0_prime: float = 250.0           # m/d maximum settling velocity
-    v0: float = 474.0                 # m/d maximum Vesilind settling velocity
-    r_h: float = 0.000576             # m3/g hindered zone parameter
-    r_p: float = 0.00286              # m3/g flocculant zone parameter
-    f_ns: float = 0.00228             # non-settleable fraction
-    x_t: float = 3000.0               # g/m3 threshold concentration, eq. 38/40
+    feed_layer: int = 6
+    v0_prime: float = 250.0
+    v0: float = 474.0
+    r_h: float = 0.000576
+    r_p: float = 0.00286
+    f_ns: float = 0.00228
+    x_t: float = 3000.0
 
-    # Solids conversion - report eq. 45
     fr_cod_ss: float = 4.0 / 3.0
 
-    # Verification switch. 1.0 = normal operation. Set to 0.0 for the
-    # zero-reaction hydraulic test (RUNBOOK step 3c); the plant then reduces to
-    # a pure CSTR-in-series plus settler, with an analytic step response.
     reaction_scale: float = 1.0
 
     @property
     def tss_factor(self) -> float:
-        return 1.0 / self.fr_cod_ss  # 0.75
+        return 1.0 / self.fr_cod_ss
 
     @property
     def n_tanks(self) -> int:
         return len(self.volumes)
 
 
-# Influent provider: t (days) -> (Q_in [m3/d], Z_in [14])
 InfluentFn = Callable[[float], tuple[float, np.ndarray]]
 
 
@@ -143,7 +132,6 @@ class Bsm1Plant:
         self._volumes = np.asarray(self.cfg.volumes, dtype=float)
         self._kla = np.asarray(self.cfg.kla, dtype=float)
 
-    # -- state packing -----------------------------------------------------
     @property
     def state_size(self) -> int:
         return self.idx.size
@@ -158,7 +146,6 @@ class Bsm1Plant:
     def pack(self, reactor: np.ndarray, solids: np.ndarray, solubles: np.ndarray) -> np.ndarray:
         return np.concatenate([reactor.reshape(-1), solids.reshape(-1), solubles.reshape(-1)])
 
-    # -- derived quantities -----------------------------------------------
     def tss(self, Z: np.ndarray) -> np.ndarray:
         """BSM1 eq. 45: total suspended solids [g SS/m3] from a state vector."""
         return self.cfg.tss_factor * Z[..., self.i_tss].sum(axis=-1)
@@ -192,7 +179,6 @@ class Bsm1Plant:
 
         return {"underflow": underflow, "effluent": effluent, "x_f": np.asarray(x_f)}
 
-    # -- right-hand side ---------------------------------------------------
     def rhs(self, t: float, y: np.ndarray, influent: InfluentFn) -> np.ndarray:
         cfg = self.cfg
         reactor, solids, solubles = self.unpack(y)
@@ -202,7 +188,6 @@ class Bsm1Plant:
         z_r = streams["underflow"]
         x_f = float(streams["x_f"])
 
-        # --- reactors, BSM1 eq. 22-26 ------------------------------------
         q1 = q_in + cfg.q_r + cfg.q_int
         r = self.kinetics.conversion(reactor) * cfg.reaction_scale
 
@@ -213,59 +198,54 @@ class Bsm1Plant:
             d_reactor[k] = (
                 q1 * (reactor[k - 1] - reactor[k]) / self._volumes[k] + r[k]
             )
-        # oxygen transfer, eq. 26
         d_reactor[:, self.i_so] += self._kla * (cfg.so_sat - reactor[:, self.i_so])
 
-        # --- settler hydraulics ------------------------------------------
-        q_f = q_in + cfg.q_r          # = q1 - q_int, feed to the clarifier
-        q_u = cfg.q_r + cfg.q_w       # underflow
-        q_e = q_f - q_u               # = q_in - q_w, effluent, eq. 30
-        v_dn = q_u / cfg.settler_area   # eq. 32
-        v_up = q_e / cfg.settler_area   # eq. 33
+        q_f = q_in + cfg.q_r
+        q_u = cfg.q_r + cfg.q_w
+        q_e = q_f - q_u
+        v_dn = q_u / cfg.settler_area
+        v_up = q_e / cfg.settler_area
         z_m = cfg.settler_layer_height
-        f = cfg.feed_layer - 1          # 0-based feed layer index
+        f = cfg.feed_layer - 1
         n = cfg.n_layers
 
         x_min = cfg.f_ns * x_f
         v_s = self.settling_velocity(solids, x_min)
-        j_s = v_s * solids  # gravity flux, eq. below 30
+        j_s = v_s * solids
 
-        # clarification flux, eq. 38 / 40 (layers above the feed layer)
         j_sc = np.zeros(n)
         for j in range(f + 1, n):
             direct = j_s[j]
             j_sc[j] = min(direct, j_s[j - 1]) if solids[j - 1] > cfg.x_t else direct
 
         d_solids = np.zeros(n)
-        d_solids[0] = (v_dn * (solids[1] - solids[0]) + min(j_s[1], j_s[0])) / z_m  # eq. 36
-        for j in range(1, f):  # eq. 35
+        d_solids[0] = (v_dn * (solids[1] - solids[0]) + min(j_s[1], j_s[0])) / z_m
+        for j in range(1, f):
             d_solids[j] = (
                 v_dn * (solids[j + 1] - solids[j])
                 + min(j_s[j], j_s[j + 1])
                 - min(j_s[j], j_s[j - 1])
             ) / z_m
-        d_solids[f] = (  # eq. 34
+        d_solids[f] = (
             q_f * x_f / cfg.settler_area
             + j_sc[f + 1]
             - (v_up + v_dn) * solids[f]
             - min(j_s[f], j_s[f - 1])
         ) / z_m
-        for j in range(f + 1, n - 1):  # eq. 37
+        for j in range(f + 1, n - 1):
             d_solids[j] = (v_up * (solids[j - 1] - solids[j]) + j_sc[j + 1] - j_sc[j]) / z_m
-        d_solids[n - 1] = (v_up * (solids[n - 2] - solids[n - 1]) - j_sc[n - 1]) / z_m  # eq. 39
+        d_solids[n - 1] = (v_up * (solids[n - 2] - solids[n - 1]) - j_sc[n - 1]) / z_m
 
-        # solubles in the clarifier, eq. 41-43
         s_f = reactor[-1][self.i_soluble]
         d_solubles = np.zeros_like(solubles)
-        for j in range(0, f):  # eq. 42
+        for j in range(0, f):
             d_solubles[j] = v_dn * (solubles[j + 1] - solubles[j]) / z_m
         d_solubles[f] = (q_f * s_f / cfg.settler_area - (v_dn + v_up) * solubles[f]) / z_m
-        for j in range(f + 1, n):  # eq. 43
+        for j in range(f + 1, n):
             d_solubles[j] = v_up * (solubles[j - 1] - solubles[j]) / z_m
 
         return self.pack(d_reactor, d_solids, d_solubles)
 
-    # -- reporting ---------------------------------------------------------
     def outputs(self, t: float, y: np.ndarray, influent: InfluentFn) -> dict[str, np.ndarray]:
         """Derived signals used by sensors, metrics and the effluent quality index."""
         reactor, solids, solubles = self.unpack(y)
@@ -285,13 +265,11 @@ class Bsm1Plant:
             "effluent": streams["effluent"],
             "underflow": streams["underflow"],
             "tss_reactor": self.tss(reactor),
-            # settler layer states are already solids concentrations [g SS/m3]
             "tss_underflow": np.asarray(solids[0]),
             "tss_effluent": np.asarray(solids[-1]),
             "kla": self._kla.copy(),
         }
 
-    # -- initial conditions ------------------------------------------------
     def seed_state(self, z_seed: np.ndarray, solids_seed: float) -> np.ndarray:
         """Uniform starting point for the warm-up integration.
 

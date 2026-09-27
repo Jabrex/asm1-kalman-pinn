@@ -10,13 +10,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-# The vault builder shells out to Python and to Node (for the .xlsx extractor).
-# Interpreters are taken from the environment so the test is machine-independent:
-#   ASM1_VAULT_PYTHON        defaults to the interpreter running the tests
-#   ASM1_VAULT_NODE          defaults to `node` on PATH
-#   ASM1_VAULT_NODE_MODULES  node_modules directory holding the extractor's
-#                            dependencies; defaults to tools/node_modules or
-#                            ./node_modules if either exists
 PYTHON = Path(os.environ.get("ASM1_VAULT_PYTHON", sys.executable))
 _node = os.environ.get("ASM1_VAULT_NODE") or shutil.which("node")
 NODE = Path(_node) if _node else None

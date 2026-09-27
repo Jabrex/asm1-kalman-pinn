@@ -36,13 +36,9 @@ from .metrics import (
 )
 
 EVAL_SETS = ("train", "holdout", "rain")
-#: Components whose level error (RMSE / mean |truth|) enters every row.
 LEVEL_COMPONENTS = ("X_B_H", "X_B_A", "X_I", "X_P")
-#: Biomass inventories scored by the tank-mean +-10 % tolerance fraction.
 TOLERANCE_COMPONENTS = ("X_B_H", "X_B_A")
 TOLERANCE_REL = 0.10
-#: Summary metadata copied into every row. v1.0 summaries lack most keys; the
-#: defaults describe the v1.0 set-up (vault kinetics, truth anchor, exact influent).
 ROW_METADATA: dict[str, Any] = {
     "seed": 0,
     "truth_preset": "vault20",
@@ -52,9 +48,7 @@ ROW_METADATA: dict[str, Any] = {
     "variant": "",
     "learned_multipliers": None,
 }
-#: Row keys that are not scalars and stay out of benchmark.csv.
 CSV_EXCLUDE = ("per_component", "learned_multipliers")
-#: A window label maps to (base evaluation set, first day, last day).
 ExtraWindows = Mapping[str, tuple[str, float, float]]
 
 
@@ -80,8 +74,6 @@ def _truth_for(set_name: str, cfg: dict[str, Any], data_dir: Path) -> Observatio
 
 
 def _run_cfg(summary: dict[str, Any]) -> dict[str, Any]:
-    # Windows come from the run itself, so changing them in base.yaml does
-    # not silently mis-slice the evaluation sets here.
     return {
         "noise": summary["noise"],
         "train_end_day": summary.get("train_end_day", 12.0),
@@ -101,9 +93,6 @@ def window_pairs(
     run_dir, data_dir = Path(run_dir), Path(data_dir)
     summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
     cfg = _run_cfg(summary)
-    # Fixed reference range from the training window, so NRMSE stays
-    # comparable across evaluation windows (the rain event widens the
-    # per-window range and would otherwise flatter rain rows).
     train_truth = _truth_for("train", cfg, data_dir)
     fixed_spread = None
     if train_truth is not None:
@@ -397,7 +386,6 @@ def make_figures(runs_dir: Path, raw_dir: Path, rows: list[dict[str, Any]], out_
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
 
-    # 1. Loss curves, with curriculum stage boundaries marked.
     fig, ax = plt.subplots(figsize=(9, 5))
     for run_dir in sorted(
         p for p in runs_dir.iterdir() if p.is_dir() and not p.name.startswith("_")
@@ -421,7 +409,6 @@ def make_figures(runs_dir: Path, raw_dir: Path, rows: list[dict[str, Any]], out_
     written.extend(save_figure(fig, path))
     plt.close(fig)
 
-    # 2. Noise robustness, Track B on the holdout set.
     fig, ax = plt.subplots(figsize=(7, 4.5))
     for model in sorted({r["model"] for r in rows}):
         pts = sorted(
@@ -464,5 +451,5 @@ def build(
     }
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     print(json.dumps(build(), indent=2))

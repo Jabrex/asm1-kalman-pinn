@@ -22,7 +22,6 @@ def test_reanalysis_reproduces_v10_holdout_rows(tmp_path):
     report = json.loads(out.read_text(encoding="utf-8"))
     assert report["label"] == "exploratory, pre-fix checkpoints"
     rows = {(r["run_id"], r["window"]): r for r in report["rows"]}
-    # v1.0 benchmark table, holdout Track B NRMSE (own-window range)
     assert rows[("cl_pinn_sigma0p10", "F")]["track_b_nrmse"] == pytest.approx(0.310, abs=0.002)
     assert rows[("persistence_sigma0p10", "F")]["track_b_nrmse"] == pytest.approx(0.372, abs=0.002)
     assert rows[("odesim_sigma0p10", "F")]["track_b_nrmse"] < 0.01

@@ -17,12 +17,12 @@ import numpy as np
 import torch
 from scipy.integrate import solve_ivp
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # repository root
-from scripts.make_baselines import ras_series, scenario_arrays, split_windows  # noqa: E402
-from src.asm1.vault_loader import vault  # noqa: E402
-from src.data.influent_views import apply_influent_knowledge  # noqa: E402
-from src.eval.metrics import state_metrics, track_summary  # noqa: E402
-from src.observers.reduced_model import InputSeries, ReducedPlantModel, _t  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from scripts.make_baselines import ras_series, scenario_arrays, split_windows
+from src.asm1.vault_loader import vault
+from src.data.influent_views import apply_influent_knowledge
+from src.eval.metrics import state_metrics, track_summary
+from src.observers.reduced_model import InputSeries, ReducedPlantModel, _t
 
 torch.set_num_threads(4)
 F64 = torch.float64
@@ -50,11 +50,11 @@ def integrate(model, variant, z0, t, q_in, z_in, tss):
         s5 = z[0, -1].index_select(-1, i_sol)
         if variant == "layers6":
             d = torch.zeros_like(lag)
-            d[0] = qf * (s5 - lag[0]) / v_layer                  # feed layer, eq. 42-43 net
+            d[0] = qf * (s5 - lag[0]) / v_layer
             for j in range(1, n_lag):
-                d[j] = qu * (lag[j - 1] - lag[j]) / v_layer      # layers below the feed
+                d[j] = qu * (lag[j - 1] - lag[j]) / v_layer
             under = lag[-1]
-        else:  # lump1: one CSTR with the layers6 mean residence time
+        else:
             tau = v_layer / qf + n_below * v_layer / qu
             d = ((s5 - lag[0]) / tau).reshape(1, -1)
             under = lag[0]

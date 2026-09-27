@@ -53,31 +53,26 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.asm1.plant import TSS_COMPONENTS, Bsm1Plant, constant_influent  # noqa: E402
-from src.asm1.vault_loader import vault  # noqa: E402
-from src.data.influent import stabilisation_influent  # noqa: E402
-from src.data.influent_views import apply_influent_knowledge  # noqa: E402
-from src.data.sensors import CANDIDATE_CHANNELS, ObservationDataset, unobserved_components  # noqa: E402
-from src.observers import anchors  # noqa: E402
-from src.observers import sensitivity as sens  # noqa: E402
-from src.observers.reduced_model import ReducedPlantModel  # noqa: E402
-from src.train.run import RAS_CHANNEL, TARGET_CHANNELS  # noqa: E402
+from src.asm1.plant import TSS_COMPONENTS, Bsm1Plant, constant_influent
+from src.asm1.vault_loader import vault
+from src.data.influent import stabilisation_influent
+from src.data.influent_views import apply_influent_knowledge
+from src.data.sensors import CANDIDATE_CHANNELS, ObservationDataset, unobserved_components
+from src.observers import anchors
+from src.observers import sensitivity as sens
+from src.observers.reduced_model import ReducedPlantModel
+from src.train.run import RAS_CHANNEL, TARGET_CHANNELS
 
 WINDOW_END_DAY = 12.0
 ZIN_REL_SD = 0.10
-#: Uniform reference prior for the structural (sensor-only) inert sum/split reading.
 REFERENCE_REL_SD = 0.5
 KINETIC_CANDIDATES = (
     "kh", "KX", "etah", "muH", "etag", "Ks", "bH", "KO_H", "KNO", "KNH_H",
     "muA", "bA", "ka", "KO_A", "KNH",
 )
-#: Lab panel errors (relative, 1 sd), identical to the Al1/Al2 anchors (G3 make_anchors).
 LAB_REL_ERROR = {"TSS": 0.05, "COD": 0.05, "SCOD": 0.05, "TKN": 0.07, "STKN": 0.07, "ALK": 0.05}
 RESPIROMETRY = (("X_B_H", 0.20), ("X_B_A", 0.25))
 RESPIROMETRY_TANKS = (0, 4)
-#: Class colours: reference categorical slots 1, 2, 3 and 7 (blue, orange, aqua,
-#: violet), validated all-pairs in light mode with the dataviz validator; the aqua
-#: contrast warning is relieved by the letter and IG value printed in every cell.
 CLASS_COLOURS = {
     "sensor-recoverable": "#2a78d6",
     "anchor-carried": "#eb6834",
@@ -97,9 +92,9 @@ class Case(NamedTuple):
     data_dir: str
     influent_mode: str
     t: np.ndarray
-    z: np.ndarray                     # (n, 5, 14) simulated reactor states, days 0-12
+    z: np.ndarray
     inputs: sens.InputTrajectory
-    y0: np.ndarray                    # full plant state at t = 0 (settler included)
+    y0: np.ndarray
     meta: dict[str, Any]
 
 
@@ -185,14 +180,11 @@ def clean(obj: Any) -> Any:
     return obj
 
 
-# -- core indices ---------------------------------------------------------------
 def core_indices(case: Case, p0: np.ndarray, sigma: float, jac_model: Any,
                  substeps: int = sens.DEFAULT_SUBSTEPS) -> dict[str, Any]:
     comps = vault().components
     n = case.t.size
     x = np.log(case.z.reshape(n, -1))
-    # The estimators' (nominal) model linearised along the plant's own trajectory: the
-    # log-Jacobian drift comes from that trajectory, not from the nominal field.
     tl = sens.tangent_linear(jac_model, x, case.inputs, case.t, substeps=substeps,
                              inputs="zin_rel", input_names=comps, drift="trajectory")
     m = sens.cumulative_propagators(tl.phis)
@@ -245,7 +237,6 @@ def ig_by_component(f: np.ndarray, p0: np.ndarray) -> dict[str, float]:
     return {name: float(ig[:, comps.index(name)].mean()) for name in unobserved_components()}
 
 
-# -- sensor value ---------------------------------------------------------------
 def sensor_tables(core: Mapping[str, Any], case: Case, p0: np.ndarray, sigma: float,
                   mask: np.ndarray) -> dict[str, Any]:
     """All 2^7 target-channel subsets, drop-one, and add-one candidates.
@@ -283,7 +274,6 @@ def sensor_tables(core: Mapping[str, Any], case: Case, p0: np.ndarray, sigma: fl
     }
 
 
-# -- laboratory assays ----------------------------------------------------------
 def assay_family(weights: np.ndarray, components) -> tuple[str, int]:
     """Identify a G3 lab operator by its support: (family, 0-based tank)."""
     comps = list(components)
@@ -356,14 +346,12 @@ def lab_tables(core: Mapping[str, Any], case: Case, p0: np.ndarray, mask: np.nda
     }
     j_as = tiers["As"]["J"]
     for name in ("Al1", "Al2"):
-        # An oracle start state has IG = 1 everywhere, so J_oracle = 1.
         tiers[name]["share_of_oracle"] = (tiers[name]["J"] - j_as) / max(1.0 - j_as, 1e-12)
     add, leave_out = [], []
     for family in sorted(set(families)):
         sel = [i for i, f_ in enumerate(families) if f_ == family]
         f_fam = sens.static_fisher(h_lab[sel], r_lab[sel])
         with_family = summary(f_sens + f_fam)
-        # ig_by_component (added in G7, reporting only): the per-state gain of each assay, for Table T3.
         add.append({"assay": family, "rows": [labels[i] for i in sel],
                     "delta_J": with_family["J"] - j_as, "ig_by_component": with_family["ig_by_component"]})
         leave_out.append({"assay": family,
@@ -379,7 +367,6 @@ def lab_tables(core: Mapping[str, Any], case: Case, p0: np.ndarray, mask: np.nda
     }
 
 
-# -- slow modes -----------------------------------------------------------------
 def truth_plant(meta: Mapping[str, Any]) -> Bsm1Plant:
     """The plant that generated the data directory (scripts may build truth plants)."""
     preset = meta.get("truth_preset", "vault20")
@@ -405,7 +392,6 @@ def full_plant_modes(plant: Bsm1Plant, y_ss: np.ndarray, n_modes: int = 6) -> di
     return out
 
 
-# -- figures --------------------------------------------------------------------
 def class_map_figure(core: Mapping[str, Any], tag: str, out_dir: Path) -> list[Path]:
     import matplotlib
 
@@ -480,7 +466,6 @@ def memory_figure(core: Mapping[str, Any], ideal: Mapping[str, Any], tag: str, o
     return paths
 
 
-# -- modes ----------------------------------------------------------------------
 def analyse(data_dir: str, prior_path: str, sigma: float, out_dir: Path, nominal_dir: str,
             influent_mode: str = "exact", substeps: int = sens.DEFAULT_SUBSTEPS,
             figures: bool = True) -> Path:
@@ -524,8 +509,6 @@ def analyse(data_dir: str, prior_path: str, sigma: float, out_dir: Path, nominal
             **sens.weak_directions(ev, evec, labels),
             "inert_sum_ig": sens.direction_information_gain(core["p_post"], p0, u_sum),
             "inert_split_ig": sens.direction_information_gain(core["p_post"], p0, u_split),
-            # The As prior pins X_I (rel sd ~1 %), so the split then borrows prior knowledge.
-            # The sensor-only (structural) reading uses a uniform reference prior instead.
             "reference_prior_rel_sd": REFERENCE_REL_SD,
             "inert_sum_ig_reference": sens.direction_information_gain(p_ref_post, p_ref, u_sum),
             "inert_split_ig_reference": sens.direction_information_gain(p_ref_post, p_ref, u_split),

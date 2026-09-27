@@ -50,7 +50,6 @@ def _realistic() -> str:
     return "k100"
 
 
-# -- G1 ----------------------------------------------------------------------
 def test_g1_run_all_flags_and_run_ids():
     from scripts import run_all
 
@@ -93,7 +92,6 @@ def test_g1_metrics():
         assert hasattr(metrics, name), "G1: src/eval/metrics.py lacks %s" % name
 
 
-# -- G2 ----------------------------------------------------------------------
 def test_g2_modules():
     from src.asm1 import truth_plants
     from src.data import influent_views
@@ -137,7 +135,6 @@ def test_g2_random_truths():
     assert all((d / "obs_dry_sigma0p10.npz").exists() for d in dirs)
 
 
-# -- G3 ----------------------------------------------------------------------
 def test_g3_observer_api():
     from src.models.losses import KineticAdapter
     from src.observers import anchors, ekf, reduced_model
@@ -164,7 +161,6 @@ def test_g3_leakage_scan_covers_observers():
     assert "src/observers" in text, "G3: tests/test_leakage.py must scan src/observers"
 
 
-# -- G4 ----------------------------------------------------------------------
 def test_g4_selections():
     from src.data.sensors import CANDIDATE_CHANNELS, SENSOR_SET
 
@@ -177,7 +173,6 @@ def test_g4_selections():
     assert choice["add"] in {c.name for c in CANDIDATE_CHANNELS}
 
 
-# -- G5 ----------------------------------------------------------------------
 def _regime_expectations(realistic: str) -> dict[str, tuple]:
     a100 = "results/v11/anchors/k100/A0.npz"
     rows = {

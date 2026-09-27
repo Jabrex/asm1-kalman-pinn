@@ -16,14 +16,13 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from anchor_utils import write_anchor  # noqa: E402
-from v10_reference import CASES, short_run_losses  # noqa: E402
+from anchor_utils import write_anchor
+from v10_reference import CASES, short_run_losses
 
 REPO = Path(__file__).resolve().parents[1]
 RAW = REPO / "results" / "raw"
 RAW_K100 = REPO / "results" / "raw_k100"
 REFERENCE = Path(__file__).resolve().parent / "data" / "v10_three_step_losses.json"
-#: Any valid kinetic names; the pre-registered subset lives in kinetic_subset.json.
 THETA = ["muA", "bA", "muH", "bH"]
 STRICT = os.environ.get("ASM1_STRICT_TESTS", "").strip().lower() not in {"", "0", "false", "no"}
 
@@ -62,9 +61,6 @@ def _first_difference(got, ref) -> str:
     return "case sets differ: %s vs %s" % (sorted(got), sorted(ref))
 
 
-# ----------------------------------------------------------------------------
-# Task 5.1 - defaults reproduce v1.0
-# ----------------------------------------------------------------------------
 def test_default_config_reproduces_v10_losses_bit_for_bit():
     ref = json.loads(REFERENCE.read_text(encoding="utf-8"))
     assert ref["label"] == "v1.0.0"
@@ -72,9 +68,6 @@ def test_default_config_reproduces_v10_losses_bit_for_bit():
     assert got == ref["cases"], _first_difference(got, ref["cases"])
 
 
-# ----------------------------------------------------------------------------
-# Task 5.2 - losses.py additions
-# ----------------------------------------------------------------------------
 def test_kinetic_parameter_names_are_the_fifteen_rate_parameters():
     from src.asm1.vault_loader import vault
     from src.models.losses import kinetic_parameter_names
@@ -104,9 +97,6 @@ def test_total_forwards_kinetic_overrides_to_the_physics_term(tmp_path):
     assert not torch.equal(base, doubled)
 
 
-# ----------------------------------------------------------------------------
-# Task 5.3 - anchors
-# ----------------------------------------------------------------------------
 def test_uniform_a0_anchor_reproduces_v10_losses_bit_for_bit(tmp_path):
     """A0 with uniform rel_std: same Z(0), weights all one, so the whole run is v1.0."""
     anchor = write_anchor(tmp_path / "A0.npz", RAW, sigma_tag="0p10", rel_std="uniform")
@@ -139,9 +129,6 @@ def test_graded_anchor_changes_only_the_ic_weights(tmp_path):
     assert trainer.anchor.name == "A0_test"
 
 
-# ----------------------------------------------------------------------------
-# Task 5.3 - influent views
-# ----------------------------------------------------------------------------
 def _aggregate_preserving_swap(z_in: np.ndarray) -> np.ndarray:
     """Per-sample COD, TKN and ammonium unchanged, the split between components changed.
 
@@ -197,9 +184,6 @@ def test_unknown_influent_mode_is_rejected(tmp_path):
         _trainer(tmp_path, influent_mode="weekly")
 
 
-# ----------------------------------------------------------------------------
-# Task 5.3 - target channels
-# ----------------------------------------------------------------------------
 def test_dropping_a_target_channel_removes_its_operator_column(tmp_path):
     from src.train.run import TARGET_CHANNELS
 
@@ -219,7 +203,7 @@ def test_dropping_a_target_channel_removes_its_operator_column(tmp_path):
     [
         (["S_O_tank5", "TSS_ras"], "never be a target"),
         (["S_O_tank5", "S_O_tank9"], "Unknown target channel"),
-        (["S_O_tank5", "S_NH_tank2"], "not in the dataset"),   # candidate absent from v1.0 data
+        (["S_O_tank5", "S_NH_tank2"], "not in the dataset"),
         ([], "empty"),
         (["S_O_tank5", "S_O_tank5"], "duplicates"),
     ],
@@ -240,9 +224,6 @@ def test_adding_a_candidate_channel_adds_an_operator_column(tmp_path):
     assert trainer.target_cols[-1] == trainer.channel_index["S_NH_tank2"]
 
 
-# ----------------------------------------------------------------------------
-# Task 5.3 - nominal plant and data provenance
-# ----------------------------------------------------------------------------
 def test_mismatch_data_still_builds_the_nominal_plant(tmp_path):
     from src.asm1.vault_loader import vault
 
@@ -273,9 +254,6 @@ def test_plant_guard_rejects_a_truth_plant(tmp_path, monkeypatch):
         _trainer(tmp_path)
 
 
-# ----------------------------------------------------------------------------
-# Task 5.4 - kinetic multipliers
-# ----------------------------------------------------------------------------
 def test_zero_multipliers_reproduce_the_fixed_parameter_residual(tmp_path):
     trainer = _trainer(tmp_path, model="cl_pinn_theta", trainable_kinetics=THETA)
     stage = trainer.schedule.stages[-1]
@@ -303,8 +281,6 @@ def test_gradient_reaches_the_kinetic_multipliers(tmp_path):
 
 
 def test_theta_run_keeps_the_cl_pinn_budget_and_initial_loss(tmp_path):
-    # Each Trainer seeds the global generator in __init__, so each one is
-    # trained before the next is built: the collocation draws then match.
     plain = _trainer(tmp_path, run_id="plain")
     plain.train()
     theta = _trainer(tmp_path, run_id="theta", model="cl_pinn_theta", trainable_kinetics=THETA)
@@ -324,9 +300,9 @@ def test_theta_run_keeps_the_cl_pinn_budget_and_initial_loss(tmp_path):
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"model": "cl_pinn_theta"},                                 # empty subset
-        {"model": "cl_pinn", "trainable_kinetics": ["muA"]},        # wrong model
-        {"model": "cl_pinn_theta", "trainable_kinetics": ["YH"]},   # stoichiometric
+        {"model": "cl_pinn_theta"},
+        {"model": "cl_pinn", "trainable_kinetics": ["muA"]},
+        {"model": "cl_pinn_theta", "trainable_kinetics": ["YH"]},
         {"model": "cl_pinn_theta", "trainable_kinetics": ["muA", "muA"]},
     ],
 )
@@ -335,9 +311,6 @@ def test_invalid_kinetic_settings_are_rejected(tmp_path, overrides):
         _trainer(tmp_path, **overrides)
 
 
-# ----------------------------------------------------------------------------
-# Task 5.5 - summary.json and checkpoint
-# ----------------------------------------------------------------------------
 SUMMARY_KEYS = (
     "data_dir", "truth_preset", "alpha", "constant_from", "anchor_file", "anchor",
     "influent_mode", "total_derivative", "ras_filter_window", "target_channels",
@@ -382,9 +355,6 @@ def test_mismatch_run_summary_names_the_truth_plant(tmp_path):
     assert summary["learned_multipliers"] == {} and summary["trainable_kinetics"] == []
 
 
-# ----------------------------------------------------------------------------
-# Task 5.7 - regime configs (scripts/make_regime_configs.py)
-# ----------------------------------------------------------------------------
 def _g4_outputs(tmp_path: Path) -> tuple[Path, Path]:
     kinetic = tmp_path / "kinetic_subset.json"
     kinetic.write_text(json.dumps({"names": THETA}), encoding="utf-8")

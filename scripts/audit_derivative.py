@@ -44,12 +44,11 @@ import torch
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from src.train.run import MODEL_SPECS, RAS_CHANNEL, RunConfig, Trainer  # noqa: E402
+from src.train.run import MODEL_SPECS, RAS_CHANNEL, RunConfig, Trainer
 
 RUN_DIRS = ("runs", "runs_seed1", "runs_seed2", "runs_ablation", "runs_flowonly", "runs_icmask")
 WINDOWS = {"train": (0.0, 12.0), "holdout": (12.0, 14.0)}
 N_POINTS = 4096
-#: Review-panel probe values (knots_central, train window, total/partial MSE ratio).
 PANEL_REFERENCE = {
     ("runs", "cl_pinn_sigma0p10"): 1.7,
     ("runs", "pinn_sigma0p10"): 11.0,
@@ -57,7 +56,6 @@ PANEL_REFERENCE = {
     ("runs", "pinn_sigma0p00"): 107.0,
 }
 PANEL_TOLERANCE = 0.20
-#: Task acceptance band for the CL-PINN sigma = 0.10 seeds 0 and 1 (knots_central).
 CL_BAND = (1.5, 2.3)
 
 

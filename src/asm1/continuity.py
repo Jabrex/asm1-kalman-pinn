@@ -70,7 +70,7 @@ def system_inventory(plant: Bsm1Plant, y: np.ndarray, component: str) -> float:
 
 def total_cod_and_n(plant: Bsm1Plant, y: np.ndarray) -> tuple[float, float]:
     """System-wide COD and N inventory [g], using the vault composition matrix."""
-    comp = plant.vault.composition  # (14, 3): COD, N, Charge
+    comp = plant.vault.composition
     cod = 0.0
     nitrogen = 0.0
     for i, name in enumerate(plant.vault.components):

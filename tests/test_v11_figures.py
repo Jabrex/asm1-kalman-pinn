@@ -126,7 +126,6 @@ def test_unknown_class_names_are_rejected():
     assert vf.normalise_class("Anchor_carried") == "anchor-carried"
 
 
-# -- G4 layouts as written by scripts/recoverability.py and scripts/recoverability_validation.py --
 REPO = Path(__file__).resolve().parents[1]
 
 
@@ -142,7 +141,6 @@ def test_the_g4_recoverability_file_is_normalised_to_the_contract():
     assert len(full["channels"]) == 7
     for comp, tanks in full["per_state_ig"].items():
         assert len(tanks) == 5 and len(set(tanks)) == 1
-    # ig_by_component is the mean over tanks: its mean over the 11 components is J
     assert np.mean([t[0] for t in full["per_state_ig"].values()]) == pytest.approx(full["ig_mean"], rel=1e-9)
     tiers = {a["tier"] for a in rec["lab_assays"]}
     assert tiers <= {"Al1", "Al2"} and rec["lab_assays"]
@@ -185,7 +183,7 @@ def test_the_g4_validation_layout_is_normalised():
 def test_fig2c_uses_the_validation_index_points_of_the_h6_cell(artefacts):
     states = json.loads((artefacts / "regime_states.json").read_text(encoding="utf-8"))
     rng = np.random.default_rng(1)
-    idx = rng.uniform(0.01, 2.0, (5, 11))  # the cell's own index, not the one of panel (a)
+    idx = rng.uniform(0.01, 2.0, (5, 11))
     points = {}
     for est in ("eks", "cl_pinn"):
         err = vf.state_entry(states, "k000_ie_a0", 0.1, est, "R0")
@@ -216,7 +214,6 @@ def test_recovery_inset_keeps_the_h3_pair_only(artefacts):
     assert [p["estimator"] for p in fig4["recovery"]] == ["cl_pinn_theta"]
 
 
-# -- review fixes (independent G7 review, 2026-09-26) -------------------------------------------------
 def test_figures_refuse_a_missing_validation_file(artefacts):
     argv = _argv(artefacts)
     argv[argv.index("--validation") + 1] = str(artefacts / "analysis" / "missing.json")
@@ -230,7 +227,7 @@ def test_realistic_cells_follow_the_regime_table(artefacts):
     table["meta"]["realistic_k"] = "050"
     table_path.write_text(json.dumps(table), encoding="utf-8")
     with pytest.raises(ValueError, match="gate D3|not k050"):
-        vf.main(_argv(artefacts))  # the argv passes the k100 recoverability file
+        vf.main(_argv(artefacts))
 
 
 def test_fig2c_needs_the_validation_entry_of_the_h6_cell(artefacts):
@@ -248,7 +245,6 @@ def test_fig2c_needs_the_validation_entry_of_the_h6_cell(artefacts):
         vf.main(argv)
 
 
-# -- print layout (2026-09-26): one file per panel, at its printed width --------------------------------
 def test_every_panel_is_drawn_at_a_journal_width(artefacts):
     from PIL import Image
 

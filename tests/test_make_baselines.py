@@ -80,6 +80,5 @@ def test_anchor_file_replaces_the_truth_start(tmp_path, monkeypatch):
     make_baselines.main(["--out", str(out), "--rows", "persistence", "--anchor-file", str(anchor)])
     with np.load(out / "persistence_sigma0p10" / "predictions.npz") as p:
         assert np.all(p["train"] == 7.0) and np.all(p["rain"] == 7.0)
-    # without settler_init the open-loop row must refuse rather than borrow truth
     with pytest.raises(SystemExit):
         make_baselines.main(["--out", str(out), "--rows", "odesim", "--anchor-file", str(anchor)])

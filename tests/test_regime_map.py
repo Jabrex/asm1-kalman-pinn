@@ -112,7 +112,6 @@ def test_score_end_to_end(v11_tree):
     win = {(w["cell"], w["window"]): w["estimator"] for w in result["table"]["winners"] if w["sigma"] == 0.1}
     assert win[("k000_ie_a0", "F")] == "ode_openloop_reduced"
     spread = [s for s in result["table"]["realisation_spread"] if s["estimator"] == "eks" and s["window"] == "F"]
-    # Sections 2 and 9: realisations 1-9 next to realisation 0, never pooled (the fixture has r01 only)
     assert spread and spread[0]["n"] == 1 and spread[0]["realisations"] == [1]
     assert spread[0]["realisation0"] == get[("eks", "F")]["median"]
     rec = result["table"]["parameter_recovery"]
@@ -131,8 +130,6 @@ def test_outputs_are_written(v11_tree):
     assert "Win / tie / loss" in (v11_tree / "regime_table.md").read_text(encoding="utf-8")
 
 
-# -- Section 9 rules and the G6 layout (added in G7 after checking the plan code against the
-#    pre-registration and the real run tree) ------------------------------------------------
 def _prow(estimator, seeds, values, family="pinn", diverged=(), failed=False, cell="k000_ie_a0"):
     return {"cell": cell, "estimator": estimator, "family": family, "window": "R0", "sigma": 0.1,
             "n": len(values), "seeds": list(seeds), "values": list(values),
@@ -231,7 +228,7 @@ def test_hypotheses_are_evaluated_with_the_registered_rules(v11_tree):
     assert hyp["H7"]["rule"] == "paired seeds" and hyp["H7"]["status"] in ("supported", "not supported")
     assert hyp["H1"]["cells"]["k000_ie_a0"]["outcome"] in ("win", "tie", "loss")
     assert hyp["H1"]["cells"]["k000_ic_a0"]["outcome"] == "missing"
-    assert hyp["H3"]["status"] == "not decided"  # no K1 cells in this tree: missing, not a loss
+    assert hyp["H3"]["status"] == "not decided"
     assert hyp["H4"]["status"] == "not decided"
     assert hyp["H3"]["k0_theta_sanity"]["multipliers"] == {0: {"muA": 1.1, "bA": 0.9}}
     assert hyp["H3"]["k0_theta_sanity"]["pass"] is True
@@ -252,7 +249,6 @@ def test_heatmaps_are_written(v11_tree):
             "fig6b_regime_map_F.pdf", "graphical_abstract_regime.png", "graphical_abstract_regime.pdf"} <= names
     for window in ("R0", "F"):
         assert any(n.startswith("figS_regime_map_%s_" % window) and n.endswith(".pdf") for n in names)
-    # every file is drawn at its printed size: full page width, or the graphical-abstract slot
     from PIL import Image
 
     from scripts.figure_layout import DOUBLE_IN
@@ -266,7 +262,6 @@ def test_heatmaps_are_written(v11_tree):
     assert rm.cell_label("k025_ie_a0") == "K.25 Ie A0"
 
 
-# -- review fixes (independent G7 review, 2026-09-26) -------------------------------------------------
 def test_more_information_rows_are_references_never_winners():
     p = _prow("cl_pinn", [0, 1, 2], [0.1, 0.1, 0.1])
     full = _prow("ode_openloop_full", [0], [0.001], family="baselines")

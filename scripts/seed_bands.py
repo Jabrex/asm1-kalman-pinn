@@ -31,12 +31,12 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.eval.report import collect_runs, save_figure  # noqa: E402
+from src.eval.report import collect_runs, save_figure
 
 RAW = Path("results/raw")
 SEED_DIRS = {
@@ -47,7 +47,6 @@ SEED_DIRS = {
 BAND_MODELS = ("cl_pinn", "pinn")
 CONTEXT_MODELS = ("cl_lstm", "lstm")
 METRICS = ("track_a_nrmse", "track_a_r2", "track_b_nrmse", "track_b_r2", "track_b_nrmse_fixed")
-#: Figure text for the evaluation sets and metrics the band figure can draw.
 SET_TEXT = {"holdout": "holdout", "train": "estimation window, days 0-12", "rain": "rain event"}
 METRIC_TEXT = {"track_b_nrmse": "Track B NRMSE", "track_b_nrmse_fixed": "Track B NRMSE (fixed range)",
                "track_a_nrmse": "Track A NRMSE"}
@@ -74,7 +73,6 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-#: Column-layout names and axis text.
 PRETTY = {"cl_pinn": "CL-PINN", "pinn": "PINN, single-stage", "cl_pinn_theta": "PINN-$\\theta$",
           "cl_lstm": "CL-LSTM", "lstm": "LSTM"}
 SET_TEXT_SHORT = {"holdout": "days 12\u201314", "train": "days 0\u201312", "rain": "rain event"}
@@ -176,7 +174,6 @@ def main(argv: list[str] | None = None) -> None:
     if not args.no_figures and args.figure_layout == "column":
         column_figure(rows, bands, args, fig_path)
     elif not args.no_figures:
-        # --- banded noise-robustness figure (v1.0: holdout, Track B) -------
         fset, fmetric = args.figure_set, args.figure_metric
         fig, ax = plt.subplots(figsize=(7, 4.5))
         noises = sorted({row["noise"] for row in rows})
@@ -195,7 +192,6 @@ def main(argv: list[str] | None = None) -> None:
             if len(set(counts)) == 1:
                 label = "%s (median of %d seeds)" % (model, counts[0])
             else:
-                # seed count per sigma, so two-seed points are labelled as such (Section 9)
                 label = "%s (median; seeds: %s)" % (
                     model, ", ".join("%d at sigma %.2f" % (n, s) for s, n in zip(xs, counts)))
             ax.plot(xs, [p["median"] for p in pts], marker="o", color=COLORS.get(model), label=label)
@@ -223,10 +219,9 @@ def main(argv: list[str] | None = None) -> None:
         ax.legend(fontsize=8)
         fig.tight_layout()
         fig_path.parent.mkdir(parents=True, exist_ok=True)
-        save_figure(fig, fig_path)  # 600 dpi PNG + vector PDF twin
+        save_figure(fig, fig_path)
         plt.close(fig)
 
-    # Compact console table for the paper edit.
     print("model      sigma  set      trackB med [min-max]   n")
     for key in sorted(bands):
         model, sigma, eval_set = key.split("|")

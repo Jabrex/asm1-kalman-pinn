@@ -49,7 +49,7 @@ def test_ixb_on_nu_alone_breaks_nitrogen_continuity():
 
 def test_ixb_with_composition_restores_continuity():
     tv = override_vault({"iXB": 0.08})
-    assert float(np.max(np.abs(tv.nu @ tv.composition))) <= 1e-15  # 4.7e-16 measured
+    assert float(np.max(np.abs(tv.nu @ tv.composition))) <= 1e-15
 
 
 @pytest.mark.parametrize("preset,alpha", PRESET_CASES)
@@ -127,7 +127,7 @@ def test_kinetic_names_are_the_fifteen_vault_kinetic_parameters():
 def test_perturbed_vault_scales_caps_eta_and_rejects_constants():
     tv = perturbed_vault({"muH": math.log(2.0), "etag": 1.0, "etah": -0.5})
     assert tv.p("muH") == pytest.approx(12.0, rel=1e-12)
-    assert tv.p("etag") == 1.0                       # 0.8 * e > 1 is capped
+    assert tv.p("etag") == 1.0
     assert tv.p("etah") == pytest.approx(0.4 * math.exp(-0.5), rel=1e-12)
     assert float(np.max(np.abs(tv.nu @ tv.composition))) <= 1e-12
     with pytest.raises(KeyError):

@@ -46,8 +46,6 @@ ANCHOR_ROOT = "results/v11/anchors"
 REGIME_DIR = Path("configs/regime")
 OBSERVER_CONFIG_DIR = Path("configs/observers")
 PREREG_TAG = "v1.1.0-prereg"
-#: Paths that must equal their state at the pre-registration tag before any
-#: full-profile PINN run or final-grid observer run starts.
 FROZEN_PATHS = (
     "PREREGISTRATION.md", "configs/base.yaml", "configs/regime", "configs/observers",
     "src", "scripts/run_all.py", "scripts/run_observers.py", "scripts/make_baselines.py",
@@ -57,7 +55,6 @@ SIGMA = 0.10
 REALISTIC_CHOICES = ("k100", "k050")
 CORE_PHASES = ("E4", "E5", "E6", "E7", "E3")
 
-#: Kinetics tag -> data directory (group G2). results/raw is the v1.0 data, untouched.
 DATA_DIRS = {
     "k000": "results/raw",
     "k025": "results/raw_k025",
@@ -67,17 +64,13 @@ DATA_DIRS = {
     "k000_off": "results/raw_k000_off",
 }
 
-#: Architecture of every model the v1.1 queues train (tests compare it with MODEL_SPECS).
 ARCH = {"cl_pinn": "pinn", "pinn": "pinn", "cl_pinn_theta": "pinn", "lstm": "lstm"}
-#: Charged run-equivalents. A 4000-step quick run costs 0.2 whatever its
-#: architecture; a full LSTM run 0.35 (measured 2.3-3.1 min against a PINN
-#: median of about 9.0 min, rounded up).
 EQ_QUICK = 0.2
 EQ_FULL = {"pinn": 1.0, "lstm": 0.35}
 G1_SMOKE_EQ = 0.2
-G6_EQ = 38.85            # smoke 1.8 + E4 9 + E5 6 + E6 14.05 + E7 4 + E3 4
+G6_EQ = 38.85
 CONTINGENCY_EQ = 6.0
-CORE_CAP = round(G1_SMOKE_EQ + G6_EQ + CONTINGENCY_EQ, 2)   # 45.05
+CORE_CAP = round(G1_SMOKE_EQ + G6_EQ + CONTINGENCY_EQ, 2)
 HARD_CAP = 50.0
 
 LIST_LINE = re.compile(r"^\s{2}(?P<run_id>\S+)\s+model=(?P<model>\S+)")

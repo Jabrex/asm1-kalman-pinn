@@ -31,7 +31,7 @@ from torch import nn
 
 from .features import FeatureBuilder, FeatureConfig
 
-_INV_SOFTPLUS_1 = float(np.log(np.e - 1.0))  # softplus(x) == 1
+_INV_SOFTPLUS_1 = float(np.log(np.e - 1.0))
 
 
 @dataclass(frozen=True)
@@ -41,9 +41,6 @@ class PinnConfig:
     activation: str = "tanh"
     features: FeatureConfig = FeatureConfig()
     scale_floor_fraction: float = 1e-3
-    #: "forward" uses one JVP (in t, or along the influent trajectory when the
-    #: influent slopes are passed); "reverse" uses one VJP per output. Both are
-    #: exact. RUNBOOK step 6 checks them against finite differences.
     derivative_mode: str = "forward"
 
 
@@ -98,7 +95,6 @@ class Asm1Pinn(nn.Module):
         layers.append(nn.Linear(self.cfg.hidden_width, self.n_outputs))
         self.net = nn.Sequential(*layers)
 
-        # Small final layer so the untrained network starts near Z = scale.
         with torch.no_grad():
             self.net[-1].weight.mul_(0.01)
             self.net[-1].bias.zero_()

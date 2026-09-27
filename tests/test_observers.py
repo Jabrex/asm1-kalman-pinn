@@ -11,12 +11,12 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from src.asm1.plant import Bsm1Plant  # noqa: E402
-from src.data.influent import stabilisation_influent  # noqa: E402
-from src.eval.metrics import state_metrics, track_summary  # noqa: E402
-from src.models.losses import Asm1Loss, ObservationOperator  # noqa: E402
-from src.observers.reduced_model import ReducedPlantModel  # noqa: E402
-from src.train.run import RAS_CHANNEL, TARGET_CHANNELS  # noqa: E402
+from src.asm1.plant import Bsm1Plant
+from src.data.influent import stabilisation_influent
+from src.eval.metrics import state_metrics, track_summary
+from src.models.losses import Asm1Loss, ObservationOperator
+from src.observers.reduced_model import ReducedPlantModel
+from src.train.run import RAS_CHANNEL, TARGET_CHANNELS
 
 REPO = Path(__file__).resolve().parents[1]
 RAW = REPO / "results" / "raw"
@@ -49,8 +49,6 @@ def _cols(ds):
 
 @pytest.fixture(scope="module")
 def model():
-    # One thread for the filter tests; restored afterwards because later modules
-    # (the v1.0 fingerprint in test_total_derivative) depend on the default count.
     threads = torch.get_num_threads()
     torch.set_num_threads(1)
     yield ReducedPlantModel()
@@ -80,7 +78,7 @@ def test_rhs_equals_the_pinn_residual_rhs(model, probe):
     plant = Bsm1Plant()
     loss = Asm1Loss(plant, ObservationOperator(plant, TARGET_CHANNELS), np.ones(14),
                     np.ones(len(TARGET_CHANNELS)), torch.device("cpu"), torch.float64)
-    f64 = lambda a: torch.as_tensor(np.asarray(a, dtype=float), dtype=torch.float64)  # noqa: E731
+    f64 = lambda a: torch.as_tensor(np.asarray(a, dtype=float), dtype=torch.float64)
     expected = loss.plant_rhs(f64(z[None]), f64([[q]]), f64(z_in[None]), f64([[tss]]))
     assert float(torch.max(torch.abs(model.rhs(z, q, z_in, tss) - expected))) <= 1e-12
 
@@ -101,7 +99,7 @@ def test_jacobians_match_central_differences(model, probe):
     params = {"muH": model.parameters["muH"], "bA": model.parameters["bA"]}
     j_x, b_ras, b_zin, b_th = model.jacobians(x, q, z_in, tss, params)
     assert (j_x.shape, b_ras.shape, b_zin.shape, b_th.shape) == ((70, 70), (70, 1), (70, 14), (70, 2))
-    g = lambda xx, rr=tss, pp=None: model.rhs_log(xx, q, z_in, rr, pp).numpy()  # noqa: E731
+    g = lambda xx, rr=tss, pp=None: model.rhs_log(xx, q, z_in, rr, pp).numpy()
     h = 1e-6
     for j in (0, 17, 35, 69):
         e = np.zeros(70)
@@ -141,17 +139,14 @@ def test_true_underflow_solubles_reproduce_the_full_plant_reactor(model):
     assert _track(reactor, tru, "track_a_measured") < 2e-3
 
 
-# --------------------------------------------------------------------------
-# Kalman filter: core
-# --------------------------------------------------------------------------
-import time  # noqa: E402
+import time
 
-from scipy.integrate import quad_vec  # noqa: E402
-from scipy.linalg import expm  # noqa: E402
+from scipy.integrate import quad_vec
+from scipy.linalg import expm
 
-from src.observers.ekf import (EkfConfig, estimate_r_from_data, ras_log_variance,  # noqa: E402
+from src.observers.ekf import (EkfConfig, estimate_r_from_data, ras_log_variance,
                                rts_smooth, run_ekf, van_loan)
-from src.train.curriculum import trailing_average  # noqa: E402
+from src.train.curriculum import trailing_average
 
 
 def _window(ds, days):
@@ -211,12 +206,9 @@ def test_one_14_day_filter_and_smoother_pass_is_fast(model, dry):
     assert time.perf_counter() - started <= 180.0
 
 
-# --------------------------------------------------------------------------
-# Kalman filter: augmented state, IEKS, forecast, q tuning
-# --------------------------------------------------------------------------
-import json  # noqa: E402
+import json
 
-from src.observers.ekf import channel_weights, forecast, ieks, tune_q  # noqa: E402
+from src.observers.ekf import channel_weights, forecast, ieks, tune_q
 
 
 def test_augmented_filter_keeps_exact_kinetics_on_twin_data(model, dry):
@@ -257,7 +249,7 @@ def test_ieks_runs_its_relinearisations(model, dry):
 def test_tune_q_selects_by_the_declared_criterion(model, dry):
     ds = dry["0p10"]
     args, rv = _window(ds, 1.0)
-    call = lambda c: tune_q(model, *args, _initial_state(ds), np.full((5, 14), 0.05), EkfConfig(),  # noqa: E731
+    call = lambda c: tune_q(model, *args, _initial_state(ds), np.full((5, 14), 0.05), EkfConfig(),
                             ras_log_var=rv, grid=(0.01, 0.1), criterion=c, horizon_steps=8, stride=16)
     inn, pred = call("innovation"), call("predictive")
     best = max(inn.table, key=lambda row: row["loglik"])
@@ -279,22 +271,18 @@ def test_tuned_filter_is_statistically_consistent():
     assert 0.5 <= info["nis_mean"] / info["n_channels"] <= 2.0
 
 
-# --------------------------------------------------------------------------
-# anchors
-# --------------------------------------------------------------------------
-from src.asm1.vault_loader import vault  # noqa: E402
-from src.observers import anchors  # noqa: E402
+from src.asm1.vault_loader import vault
+from src.observers import anchors
 
 
 def test_lab_operators_read_the_intended_sums(probe):
     z, v = probe[0], vault()
     ops = anchors.lab_operators(v)
     i = {name: v.index(name) for name in v.components}
-    read = lambda key: float(np.sum(ops[key] * z))  # noqa: E731
+    read = lambda key: float(np.sum(ops[key] * z))
     organic = ("S_I", "S_S", "X_I", "X_S", "X_B_H", "X_B_A", "X_P")
     assert read("COD_tank1") == pytest.approx(sum(z[0, i[c]] for c in organic))
     assert read("CODf_tank5") == pytest.approx(z[4, i["S_I"]] + z[4, i["S_S"]])
-    # The vault's N column gives X_I no nitrogen (unlike the BSM1 EQI formula).
     tkn = (z[0, i["S_NH"]] + z[0, i["S_ND"]] + z[0, i["X_ND"]]
            + v.p("iXB") * (z[0, i["X_B_H"]] + z[0, i["X_B_A"]]) + v.p("iXP") * z[0, i["X_P"]])
     assert read("TKN_tank1") == pytest.approx(tkn)
@@ -328,10 +316,7 @@ def test_ensemble_log_std_and_ic_weights():
     assert w.mean() == pytest.approx(1.0, rel=1e-12) and w[0, 0] < w[1, 1]
 
 
-# --------------------------------------------------------------------------
-# pipeline
-# --------------------------------------------------------------------------
-from src.observers.pipeline import resolve_channels  # noqa: E402
+from src.observers.pipeline import resolve_channels
 
 
 def test_resolve_channels_rejects_the_ras_input():

@@ -23,14 +23,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.v11_plan import HARD_CAP, LEDGER  # noqa: E402
+from scripts.v11_plan import HARD_CAP, LEDGER
 
 FIELDS = (
     "run_id", "phase", "run_dir", "attempt", "model", "profile", "sigma", "seed",
     "minutes", "eq", "status", "workers", "recorded_utc",
 )
-#: error.txt substrings that mark an infrastructure crash. Only these runs may
-#: be rerun, with an identical config; any other failure is reported, not rerun.
 INFRA_MARKERS = (
     "CUDA error", "CUDA out of memory", "cuDNN error", "CUBLAS_STATUS",
     "KeyboardInterrupt", "MemoryError", "BrokenPipeError", "No space left on device",

@@ -43,16 +43,10 @@ from .sensors import ObservationDataset
 
 MODES: tuple[str, ...] = ("exact", "composite", "composite_biased")
 
-#: Total organic COD, the laboratory "total COD" of the influent.
 ORGANIC_COD: tuple[str, ...] = ("S_I", "S_S", "X_I", "X_S", "X_B_H", "X_B_A", "X_P")
-#: Held at their Table 5 values in the composite view (BSM1 section 2.4 keeps
-#: S_O, S_NO, X_B_A, X_P and S_ALK constant in any influent; S_N2 is nil).
 FIXED_AT_TABLE5: tuple[str, ...] = ("S_O", "S_NO", "X_B_A", "X_P", "S_ALK", "S_N2")
-#: COD components rescaled to the day's COD.
 SCALED_COD: tuple[str, ...] = tuple(c for c in ORGANIC_COD if c not in FIXED_AT_TABLE5)
-#: Organic nitrogen components rescaled so that TKN is conserved.
 ORGANIC_N: tuple[str, ...] = ("S_ND", "X_ND")
-#: Readily biodegradable COD multiplier in the biased view.
 BIAS_SS_FACTOR = 0.75
 
 
@@ -110,7 +104,7 @@ def apply_influent_knowledge(
     scaled_t5 = float(t5[i_scaled].sum())
     fixed_cod = float(t5[i_fixed_cod].sum())
 
-    out = np.tile(t5, (len(cod_day), 1))  # one recomposed row per day
+    out = np.tile(t5, (len(cod_day), 1))
     f_cod = (cod_day - fixed_cod) / scaled_t5
     out[:, i_scaled] = t5[i_scaled][None, :] * f_cod[:, None]
     out[:, v.index("S_NH")] = nh_day

@@ -29,7 +29,6 @@ def _cfg(**over):
 def test_validate_fills_defaults():
     cfg = ci.validate_cell_config(_cfg())
     assert cfg["ras_input"] == "filtered" and cfg["channels"] == "default"
-    # Gate D4 (2026-09-24) extended the grid to seven points; the default follows ekf.Q_GRID.
     assert cfg["q_grid"] == [0.003, 0.01, 0.03, 0.1, 0.3, 1.0, 3.0] and cfg["r_floor"] == 0.01
     assert cfg["theta_prior_sd"] == 0.693 and cfg["frozen_q_from"] is None
 

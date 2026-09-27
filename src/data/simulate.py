@@ -35,21 +35,10 @@ from .influent import (
     stabilisation_influent,
 )
 
-#: BSM1 evaluation sampling interval (report p.14).
 SAMPLE_INTERVAL_DAYS = 15.0 / (24.0 * 60.0)
-#: BSM1 names 100 days for stabilisation (report section 3), but that is not
-#: enough here: at 20 degrees C two different initial conditions still differ by
-#: 1.6e-05 after 100 days, and only converge to 1.5e-10 by day 200. The warm-up
-#: is a one-off cost, so it is taken long enough that the starting state is
-#: genuinely independent of the seed. RUNBOOK step 3, gate 3f verifies this.
 WARMUP_DAYS = 200.0
 
 DEFAULT_METHOD = "BDF"
-#: Tighter than a smooth problem would need. The Takacs settler RHS is only
-#: piecewise continuous - the flux limiter's ``min()`` branches switch and the
-#: X_t threshold is crossed between layers constantly - which degrades BDF's
-#: error estimator on the settler states. rtol 1e-10 puts settler solids near
-#: 1e-6 relative, while the smooth reactor states land near 1e-8.
 DEFAULT_RTOL = 1e-10
 DEFAULT_ATOL = 1e-12
 
@@ -66,17 +55,17 @@ class SolverSettings:
 class SimulationResult:
     """Sampled trajectory plus every derived stream downstream code needs."""
 
-    t: np.ndarray                 # (n,) days
-    y: np.ndarray                 # (n, state_size) raw ODE state
-    reactor: np.ndarray           # (n, 5, 14)
-    settler_solids: np.ndarray    # (n, 10)
-    effluent: np.ndarray          # (n, 14)
-    underflow: np.ndarray         # (n, 14)
-    influent: np.ndarray          # (n, 14)
-    q_in: np.ndarray              # (n,)
-    tss_reactor: np.ndarray       # (n, 5)
-    tss_underflow: np.ndarray     # (n,)
-    tss_effluent: np.ndarray      # (n,)
+    t: np.ndarray
+    y: np.ndarray
+    reactor: np.ndarray
+    settler_solids: np.ndarray
+    effluent: np.ndarray
+    underflow: np.ndarray
+    influent: np.ndarray
+    q_in: np.ndarray
+    tss_reactor: np.ndarray
+    tss_underflow: np.ndarray
+    tss_effluent: np.ndarray
     meta: dict[str, Any]
 
     def save(self, path: Path | str) -> Path:

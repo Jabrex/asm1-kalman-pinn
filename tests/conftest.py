@@ -10,10 +10,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.asm1.model import Asm1Kinetics  # noqa: E402
-from src.asm1.plant import Bsm1Plant  # noqa: E402
-from src.asm1.vault_loader import vault  # noqa: E402
-from src.data.influent import BSM1_TABLE5_MEAN  # noqa: E402
+from src.asm1.model import Asm1Kinetics
+from src.asm1.plant import Bsm1Plant
+from src.asm1.vault_loader import vault
+from src.data.influent import BSM1_TABLE5_MEAN
 
 
 @pytest.fixture(scope="session")

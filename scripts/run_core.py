@@ -34,8 +34,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts import gpu_ledger  # noqa: E402
-from scripts.v11_plan import (  # noqa: E402
+from scripts import gpu_ledger
+from scripts.v11_plan import (
     CONCURRENCY, CORE_CAP, CORE_PHASES, HARD_CAP, INFLIGHT, LEDGER, REPO, Job, core_queue,
     determinism_job, log_deviation, nominal_eq, planned_runs, realistic_k, registration_state,
     sigma_of, sigma_tag, smoke_queue,

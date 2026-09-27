@@ -15,8 +15,6 @@ from ..data.sensors import SensorChannel
 from ..models.losses import ObservationOperator
 from .reduced_model import InputSeries, ReducedPlantModel, Z_FLOOR
 
-# per sqrt(day), log units. Extended to 3.0 at gate D4 (2026-09-24): on the original five
-# points the innovation optimum sat on the edge; on seven it is interior at (0.3, 0.3).
 Q_GRID: tuple[float, ...] = (0.003, 0.01, 0.03, 0.1, 0.3, 1.0, 3.0)
 MAD_TO_SD = 1.4826
 Q_CRITERIA = ("innovation", "predictive")
@@ -27,13 +25,13 @@ class EkfConfig:
     substeps: int = 3
     q_soluble: float = 0.03
     q_particulate: float = 0.01
-    q_theta: float = 1e-3            # random walk of log multipliers, per sqrt(day)
-    r_mode: str = "data"             # "data" (MAD of log differences) or "spec"
-    r_floor: float = 0.01            # log-unit sd floor per channel
-    augment: tuple[str, ...] = ()    # kinetic constants appended as log multipliers
-    theta_prior_sd: float = 0.693    # ln 2, as the PINN kinetic prior
-    ieks_iterations: int = 5         # cap on IEKS relinearisations
-    ieks_tol: float = 1e-4           # max |change| of the smoothed log state
+    q_theta: float = 1e-3
+    r_mode: str = "data"
+    r_floor: float = 0.01
+    augment: tuple[str, ...] = ()
+    theta_prior_sd: float = 0.693
+    ieks_iterations: int = 5
+    ieks_tol: float = 1e-4
     ras_filter_window: int = 4
     divergence_nis_factor: float = 10.0
 
@@ -41,17 +39,17 @@ class EkfConfig:
 @dataclass
 class EkfResult:
     t: np.ndarray
-    x_pred: np.ndarray            # (n, d)
-    x_filt: np.ndarray            # (n, d)
-    P_pred: np.ndarray | None     # (n, d, d); None when store=False
+    x_pred: np.ndarray
+    x_filt: np.ndarray
+    P_pred: np.ndarray | None
     P_filt: np.ndarray | None
-    P_filt_diag: np.ndarray       # (n, d)
-    Phi: np.ndarray | None        # (n-1, d, d)
-    innovations: np.ndarray       # (n, m)
-    nis: np.ndarray               # (n,)
-    loglik: float                 # -inf if diverged
+    P_filt_diag: np.ndarray
+    Phi: np.ndarray | None
+    innovations: np.ndarray
+    nis: np.ndarray
+    loglik: float
     diverged: bool
-    r: np.ndarray                 # (m,) log-unit measurement variances
+    r: np.ndarray
     ras_log_var: float
     names: tuple[str, ...]
     channels: tuple[str, ...]

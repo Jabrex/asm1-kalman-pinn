@@ -35,21 +35,19 @@ from scipy.integrate import solve_ivp
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.asm1.plant import Bsm1Plant  # noqa: E402
-from src.asm1.vault_loader import vault  # noqa: E402
-from src.data.influent_views import MODES as INFLUENT_MODES, apply_influent_knowledge  # noqa: E402
-from src.data.sensors import ObservationDataset  # noqa: E402
-from src.observers.reduced_model import ReducedPlantModel  # noqa: E402
-from src.train.curriculum import trailing_average  # noqa: E402
-from src.train.run import RAS_CHANNEL  # noqa: E402
+from src.asm1.plant import Bsm1Plant
+from src.asm1.vault_loader import vault
+from src.data.influent_views import MODES as INFLUENT_MODES, apply_influent_knowledge
+from src.data.sensors import ObservationDataset
+from src.observers.reduced_model import ReducedPlantModel
+from src.train.curriculum import trailing_average
+from src.train.run import RAS_CHANNEL
 
 RAW = Path("results/raw")
 OUT = Path("results/runs")
 SIGMAS = (0.0, 0.05, 0.10, 0.15)
 TRAIN_END = 12.0
 HOLDOUT = (12.0, 14.0)
-#: Looser than the generator's 1e-10 on purpose (v1.0): the baseline must not
-#: reproduce the data file bit for bit through an identical solve.
 RTOL = 1e-6
 ATOL = 1e-8
 ROWS = ("persistence", "odesim", "ode_openloop_reduced", "ode_openloop_full")
@@ -131,7 +129,6 @@ def main(argv: list[str] | None = None) -> int:
 
     raw, out, plant = args.data_dir, args.out, Bsm1Plant()
     dry = scenario_arrays(raw, "dry")
-    # The random truths (results/raw_rand/<i>) hold the dry scenario only; their rows carry no rain key.
     rain = scenario_arrays(raw, "rain") if (raw / "sim_rain.npz").exists() else None
     scenarios = {"dry": dry, **({"rain": rain} if rain is not None else {})}
     anchor = load_anchor(args.anchor_file)
@@ -179,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
                                                **({"rain": traj["rain"]} if "rain" in traj else {})}
         seconds["ode_openloop_reduced"] = (time.perf_counter() - started) / len(args.sigmas)
 
-    from src.eval.metrics import state_metrics, track_summary  # noqa: E402
+    from src.eval.metrics import state_metrics, track_summary
 
     truth = split_windows(dry["t"], dry["reactor"])
     for row in args.rows:

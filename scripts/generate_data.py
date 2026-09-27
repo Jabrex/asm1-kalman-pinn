@@ -47,13 +47,13 @@ from scipy.integrate import simpson
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.asm1.continuity import total_cod_and_n  # noqa: E402
-from src.asm1.plant import Bsm1Plant  # noqa: E402
-from src.asm1.truth_plants import PRESETS, effective_alpha, perturbed_vault, truth_vault  # noqa: E402
-from src.asm1.vault_loader import Asm1Vault  # noqa: E402
-from src.data.influent import constant_scenario, dry_weather, rain_weather  # noqa: E402
-from src.data.sensors import CANDIDATE_CHANNELS, NOISE_LEVELS, SensorModel  # noqa: E402
-from src.data.simulate import (  # noqa: E402
+from src.asm1.continuity import total_cod_and_n
+from src.asm1.plant import Bsm1Plant
+from src.asm1.truth_plants import PRESETS, effective_alpha, perturbed_vault, truth_vault
+from src.asm1.vault_loader import Asm1Vault
+from src.data.influent import constant_scenario, dry_weather, rain_weather
+from src.data.sensors import CANDIDATE_CHANNELS, NOISE_LEVELS, SensorModel
+from src.data.simulate import (
     SAMPLE_INTERVAL_DAYS,
     WARMUP_DAYS,
     SimulationResult,
@@ -62,28 +62,10 @@ from src.data.simulate import (  # noqa: E402
     warm_up,
 )
 
-#: The v1.0 dataset. A full run refuses to write here unless --overwrite is
-#: given; --realisations-only may add obs_dry_*_rXX.npz files next to it.
 V1_RAW = REPO_ROOT / "results" / "raw"
-#: Author-transcribed BSM1 reference (parameter table and open-loop steady state).
 BSM1_REFERENCE = REPO_ROOT / "tests" / "data" / "bsm1_openloop_steady_state.json"
 
-#: The reactor train is the control volume the PINN models and the one its
-#: physics residual enforces, so its balance must close. This gate is enforced,
-#: not merely printed. The whole-plant balance is reported alongside but not
-#: gated: it carries the BSM1 eq. 46 clarifier approximation.
 REACTOR_CLOSURE_GATE = 1e-6
-#: Grid refinement for the closure re-check. Simpson's rule on the 15-minute
-#: dataset grid has a quadrature floor, and truth kinetics other than the vault
-#: set lift it over the gate while the trajectory itself is fine. Measured
-#: 2026-09-23 by re-sampling one integration (worst of COD and N):
-#:     vault20 dry     6.7e-7 (15 min)  2.8e-7 (7.5)  4.1e-8 (3.75)  2.8e-8 (1.875)
-#:     bsm1_15c dry    2.0e-6           9.5e-7        2.3e-8         1.9e-8
-#:     graded 0.5 rain 4.2e-6           2.0e-7
-#: so the solver floor is near 3e-8 and the 15- and 7.5-minute excess is
-#: quadrature. When the dataset-grid value fails, the same trajectory is sampled
-#: again on a 3.75-minute grid for the check only (solve_ivp step selection does
-#: not depend on t_eval); the saved dataset keeps the 15-minute grid.
 CLOSURE_REFINE_FACTOR = 4
 
 SCENARIOS = {
@@ -162,9 +144,6 @@ def closure_report(plant: Bsm1Plant, result: SimulationResult) -> dict[str, floa
 
     out: dict[str, float] = {}
 
-    # --- reactor train ---------------------------------------------------
-    # The internal recycle leaves tank 5 and re-enters tank 1, both inside this
-    # control volume, so it cancels from the boundary flux.
     z5 = result.reactor[:, -1, :]
     q_r = plant.cfg.q_r
     influent_load = _integrate(result.q_in[:, None] * (result.influent @ comp), result.t, axis=0)
@@ -179,7 +158,6 @@ def closure_report(plant: Bsm1Plant, result: SimulationResult) -> dict[str, floa
     out["reactor_cod_closure"] = float(error[0])
     out["reactor_n_closure"] = float(error[1])
 
-    # --- whole plant -----------------------------------------------------
     q_e = result.q_in - plant.cfg.q_w
     effluent_load = _integrate(q_e[:, None] * (result.effluent @ comp), result.t, axis=0)
     wastage_load = _integrate(plant.cfg.q_w * (result.underflow @ comp), result.t, axis=0)
@@ -345,7 +323,7 @@ def main(argv: list[str] | None = None) -> int:
     sensors = SensorModel()
     extras = tuple(CANDIDATE_CHANNELS) if args.candidate_channels else ()
     for sigma in list(args.sigmas) + list(args.realisation_sigmas):
-        noise_seed(args.seed, sigma)  # validates membership in NOISE_LEVELS
+        noise_seed(args.seed, sigma)
 
     if args.realisations_only:
         result = SimulationResult.load(out_dir / "sim_dry.npz")
@@ -406,8 +384,6 @@ def main(argv: list[str] | None = None) -> int:
         "realisation_sigmas": list(args.realisation_sigmas),
         "closure_gate": REACTOR_CLOSURE_GATE,
         "closure_refine_factor": CLOSURE_REFINE_FACTOR,
-        # Thread count changes BDF's LAPACK path: 1 thread differs from the
-        # threaded path by ~5e-12 relative, while 4 and 24 threads are bit-identical.
         "openblas_num_threads": os.environ.get("OPENBLAS_NUM_THREADS"),
         "steady_state_reactor": plant.unpack(y_steady)[0].tolist(),
         "start_reactor": plant.unpack(y_start)[0].tolist(),
@@ -448,8 +424,6 @@ def main(argv: list[str] | None = None) -> int:
             closure_failures.append(name)
 
         summary = result.meta.get("influent_summary", {})
-        # The constant scenario reports only a mean; the diurnal ones report the
-        # achieved extremes as well.
         if "flow_min_achieved" in summary:
             print("        flow mean %.1f (dry-weather target %.1f), range [%.0f, %.0f] (target %s)"
                   % (summary["flow_mean_achieved"], summary["flow_mean_target"],

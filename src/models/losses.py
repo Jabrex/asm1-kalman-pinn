@@ -94,7 +94,6 @@ class LossParts:
     ic: torch.Tensor
     positivity: torch.Tensor
     balance: torch.Tensor
-    #: Prior on the log kinetic multipliers; zero unless the Trainer adds it.
     kinetic_prior: torch.Tensor = field(default_factory=lambda: torch.zeros(()))
 
     def detached(self) -> dict[str, float]:
@@ -154,7 +153,6 @@ class ObservationOperator:
         self.plant = plant
         self.channels = tuple(channels)
         self.names = tuple(c.name for c in self.channels)
-        # (kind, tank, component index or None, linear weights or None)
         self._spec: list[tuple[str, int, int | tuple[int, ...] | None, tuple[float, ...] | None]] = []
         for c in self.channels:
             if c.kind == "state":
@@ -219,11 +217,6 @@ class Asm1Loss:
 
         self.state_scale = T(np.maximum(state_scale, 1e-9))
         self.target_scale = T(np.maximum(target_scale, 1e-9))
-        # Optional (n_tanks, n_components) non-negative weights on the IC
-        # anchor. ``ic_mask`` is the v1.0 name for a 0/1 weight array that
-        # restricts the anchor to directly sensed entries; v1.1 anchors pass
-        # normalised inverse log-variances. None anchors the full state with
-        # equal weight (the v1.0 mean).
         if ic_mask is not None and ic_weights is not None:
             raise ValueError("Pass ic_weights or its alias ic_mask, not both")
         weights = ic_weights if ic_weights is not None else ic_mask
@@ -237,9 +230,6 @@ class Asm1Loss:
             if not np.all(np.isfinite(weights)) or np.any(weights < 0.0):
                 raise ValueError("ic_weights must be finite and non-negative")
             if np.all(weights == 1.0):
-                # Uniform unit weights are the plain v1.0 anchor; take the v1.0
-                # code path so the value is bit-identical rather than equal to
-                # rounding.
                 weights = None
         self.ic_weights = None if weights is None else T(weights)
         self.volumes = T(self.cfg.volumes).view(1, -1, 1)
@@ -248,22 +238,18 @@ class Asm1Loss:
         self.q_int = T(self.cfg.q_int)
         self.q_r = T(self.cfg.q_r)
         self.tss_factor = float(self.cfg.tss_factor)
-        # Mirrors Bsm1Plant.rhs. If the plant is configured with reactions off,
-        # the physics term must enforce the same dynamics the data was generated
-        # with, otherwise the residual silently supervises a different model.
         self.reaction_scale = float(self.cfg.reaction_scale)
 
         self.i_sol = T(plant.i_soluble, torch.long)
         self.i_part = T(plant.i_particulate, torch.long)
         self.i_tss = T(plant.i_tss, torch.long)
         self.i_so = T(np.array([plant.i_so]), torch.long)
-        self.composition = T(plant.vault.composition)  # (14, 3)
+        self.composition = T(plant.vault.composition)
 
     @property
     def ic_mask(self) -> torch.Tensor | None:
         return self.ic_weights
 
-    # -- physics -----------------------------------------------------------
     def recycle_composition(self, z5: torch.Tensor, tss_ras: torch.Tensor) -> torch.Tensor:
         """Return-sludge composition from tank-5 prediction and measured RAS TSS."""
         tss5 = self.tss_factor * z5.index_select(-1, self.i_tss).sum(-1, keepdim=True)
@@ -284,9 +270,9 @@ class Asm1Loss:
         """``f_ASM1(Z, u(t))`` for the five reactors; ``z`` is ``(n, 5, 14)``."""
         z5 = z[:, -1, :]
         zr = self.recycle_composition(z5, tss_ras)
-        q1 = q_in + self.q_r + self.q_int  # (n, 1)
+        q1 = q_in + self.q_r + self.q_int
 
-        load_in = self.q_int * z5 + self.q_r * zr + q_in * z_in  # (n, 14)
+        load_in = self.q_int * z5 + self.q_r * zr + q_in * z_in
         first = (load_in - q1 * z[:, 0, :]) / self.volumes[:, 0, :]
         rest = q1.unsqueeze(-1) * (z[:, :-1, :] - z[:, 1:, :]) / self.volumes[:, 1:, :]
         transport = torch.cat([first.unsqueeze(1), rest], dim=1)
@@ -294,7 +280,7 @@ class Asm1Loss:
         reaction = self.kinetics.conversion(z, overrides=params) * self.reaction_scale
 
         aeration = torch.zeros_like(z)
-        so = z.index_select(2, self.i_so)              # (n, 5, 1)
+        so = z.index_select(2, self.i_so)
         aeration = aeration.index_copy(2, self.i_so, self.kla * (self.so_sat - so))
 
         return transport + reaction + aeration
@@ -311,7 +297,6 @@ class Asm1Loss:
         """Scale-normalised ``dZ/dt - f_ASM1(Z, u)``; shape ``(n, 5, 14)``."""
         return (dz_dt - self.plant_rhs(z, q_in, z_in, tss_ras, params)) / self.state_scale
 
-    # -- individual terms --------------------------------------------------
     def data_loss(self, z: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         pred = self.operator(z)
         return torch.mean(((pred - targets) / self.target_scale) ** 2)
@@ -319,7 +304,6 @@ class Asm1Loss:
     def ic_loss(self, z0_pred: torch.Tensor, z0_true: torch.Tensor) -> torch.Tensor:
         if self.ic_weights is None:
             return torch.mean(((z0_pred - z0_true) / self.state_scale) ** 2)
-        # Zero-weight entries never touch z0_true, so a NaN there cannot propagate.
         w = self.ic_weights
         diff = torch.where(w > 0.0, z0_pred - z0_true, torch.zeros_like(z0_pred))
         sq = (diff / self.state_scale) ** 2
@@ -346,7 +330,7 @@ class Asm1Loss:
         t_s = t.squeeze(-1)[order]
         z_s, q_s, zin_s, ras_s = z[order], q_in[order], z_in[order], tss_ras[order]
 
-        holdup = z_s * self.volumes  # (n, 5, 14) mass per tank
+        holdup = z_s * self.volumes
         inventory = torch.einsum("ntc,cq->nq", holdup, self.composition)
         delta = inventory[-1] - inventory[0]
 
@@ -363,12 +347,8 @@ class Asm1Loss:
 
         integral = torch.trapezoid(flux, t_s, dim=0)
         scale = torch.clamp(torch.abs(integral) + torch.abs(delta), min=1e-6)
-        # COD and N only; the charge balance carries the vault's documented
-        # missing alkalinity kinetic terms (cells X82 / X84) and is reported
-        # rather than enforced.
         return torch.mean((((delta - integral) / scale)[:2]) ** 2)
 
-    # -- assembly ----------------------------------------------------------
     def total(
         self,
         weights: LossWeights,

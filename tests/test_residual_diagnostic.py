@@ -42,7 +42,7 @@ def test_v11_checkpoint_uses_the_filtered_ras_and_learned_multipliers(tmp_path, 
     trainer.finalise(0.0)
     _, _, _, ras = rd.input_series(trainer)
     raw = trainer.data["dry"].obs[:, trainer.ras_col]
-    np.testing.assert_allclose(ras, trailing_average(raw, 4))  # final hierarchical stage smooths with window 1
+    np.testing.assert_allclose(ras, trailing_average(raw, 4))
     first = rd.diagnose(tmp_path / "pinn", n=256, seed=0)["runs"][0]
     assert np.isfinite(first["mse_R0"]) and np.isfinite(first["mse_F"])
     summary_path = out / "cl_pinn_sigma0p10" / "summary.json"

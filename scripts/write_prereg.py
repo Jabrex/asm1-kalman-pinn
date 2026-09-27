@@ -24,8 +24,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts import gpu_ledger  # noqa: E402
-from scripts.v11_plan import (  # noqa: E402
+from scripts import gpu_ledger
+from scripts.v11_plan import (
     ANCHOR_ROOT, BSM1_GATE, CONCURRENCY, GATE_D3, NUMERICS_JSON, REPO, core_queue, kinetic_names,
     realistic_k, sensor_confirmation,
 )
@@ -48,7 +48,6 @@ CONTEXT_KEYS = (
     "sensor_add", "gpu_table", "gpu_total", "observer_table", "observer_total", "claim_cells",
     "predating_table", "smoke_line", "concurrency_line", "ledger_line",
 )
-#: (path, role, required). Directories are digested over all their files.
 PREDATING = (
     ("results/v11/bsm1_gate.json", "BSM1 open-loop steady-state gate (G2)", False),
     ("results/v11/anchors", "anchor files and ensembles (G3)", True),

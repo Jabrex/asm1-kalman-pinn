@@ -29,10 +29,8 @@ import torch
 from src.models.pinn import Asm1Pinn, PinnConfig
 
 REPO = Path(__file__).resolve().parents[1]
-DT = 1.0 / 96.0  # the 15-minute sample spacing of the generated datasets
+DT = 1.0 / 96.0
 
-#: Off-knot times: 0.6 + 0.25 k days sit 0.4 of a sample past a grid knot, so a
-#: central difference with h = 1e-6 never straddles a slope change.
 TIMES = 0.5 + np.arange(12) * 0.25 + 0.1
 
 
@@ -54,7 +52,7 @@ def _toy_model() -> tuple[Asm1Pinn, np.ndarray, np.ndarray, np.ndarray]:
         q_scale=float(q.mean()), z_in_scale=z.mean(axis=0), cfg=PinnConfig(),
     ).to(torch.float64)
     with torch.no_grad():
-        model.net[-1].weight.mul_(100.0)  # undo the small-init shrink: a harder test
+        model.net[-1].weight.mul_(100.0)
     return model, grid, q, z
 
 
@@ -113,11 +111,9 @@ def test_total_derivative_matches_trajectory_central_difference():
         qp, zp, _, _ = _inputs(grid, q, z, TIMES + h)
         qm, zm, _, _ = _inputs(grid, q, z, TIMES - h)
         fd = (model(tt + h, qp, zp) - model(tt - h, qm, zm)) / (2.0 * h)
-        # the state value itself is untouched by the tangents
         assert torch.equal(z_val, model(tt, qq, zz))
     assert _per_output_rel(d_tot.detach(), fd) < 1e-4
 
-    # the partial derivative must fail the same check, or the test cannot tell them apart
     _, d_par = model.state_and_derivative(t, qq, zz)
     assert _per_output_rel(d_par.detach(), fd) > 1e-2
 
@@ -153,21 +149,18 @@ def test_trailing_average_is_causal_and_correct():
     naive = np.stack([x[max(0, i - w + 1): i + 1].mean(axis=0) for i in range(len(x))])
     np.testing.assert_allclose(out, naive, rtol=1e-12, atol=1e-12)
 
-    # perturbing sample k must leave every earlier output exactly unchanged
     k = 20
     y = x.copy()
     y[k] += 1e3
     np.testing.assert_array_equal(trailing_average(y, w)[:k], out[:k])
     assert not np.allclose(trailing_average(y, w)[k], out[k])
 
-    # 1-D input works, and window <= 1 returns an unchanged copy
     np.testing.assert_allclose(trailing_average(x[:, 0], w), naive[:, 0], rtol=1e-12)
     same = trailing_average(x, 1)
     np.testing.assert_array_equal(same, x)
     assert same is not x
 
 
-# --- tests that need the generated datasets -----------------------------------
 def _require(path: Path) -> Path:
     if not path.exists():
         pytest.skip("needs %s - run 'python -m scripts.generate_data' first" % path.name)
@@ -214,7 +207,7 @@ def test_ras_filter_feeds_the_filtered_signal_to_training():
 
     base = _trainer()
     filt = _trainer(ras_filter_window=4)
-    stage = base.schedule.stages[-1]  # smoothing window 1 in the final stage
+    stage = base.schedule.stages[-1]
     raw = base.data["dry"].window(0.0, stage.horizon_days).obs[:, base.ras_col]
     got = filt._stage_tensors(stage)["tss_ras"].squeeze(-1).numpy()
     np.testing.assert_allclose(got, trailing_average(raw, 4), rtol=1e-12)

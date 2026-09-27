@@ -40,7 +40,6 @@ import numpy as np
 from ..asm1.vault_loader import vault
 from .simulate import SimulationResult
 
-#: Noise levels swept by the benchmark (0 = noiseless reference).
 NOISE_LEVELS: tuple[float, ...] = (0.0, 0.05, 0.10, 0.15)
 
 
@@ -55,8 +54,8 @@ class SensorChannel:
     """
 
     name: str
-    kind: str                 # "state" | "tss_reactor" | "tss_underflow" | "linear"
-    tank: int | None = None   # 0-based reactor index
+    kind: str
+    tank: int | None = None
     component: str | None = None
     weights: tuple[tuple[str, float], ...] | None = None
     sigma_override: float | None = None
@@ -66,7 +65,6 @@ class SensorChannel:
         return self.name
 
 
-#: The measurement set. Eight channels, all of them realistic online sensors.
 SENSOR_SET: tuple[SensorChannel, ...] = (
     SensorChannel("S_O_tank3", "state", tank=2, component="S_O"),
     SensorChannel("S_O_tank4", "state", tank=3, component="S_O"),
@@ -79,11 +77,6 @@ SENSOR_SET: tuple[SensorChannel, ...] = (
 )
 
 
-#: Candidate channels for the sensor-value analysis (v1.1). Never part of
-#: SENSOR_SET, so Track B and every v1.0 consumer are unchanged. They are
-#: written as extra columns after the eight standard ones, with their own
-#: noise stream. SCOD is a UV-Vis soluble COD probe (S_I + S_S); its 0.20
-#: relative error reflects calibration drift rather than electronic noise.
 CANDIDATE_CHANNELS: tuple[SensorChannel, ...] = (
     SensorChannel("S_NH_tank1", "state", tank=0, component="S_NH"),
     SensorChannel("S_NH_tank2", "state", tank=1, component="S_NH"),
@@ -119,20 +112,19 @@ def unobserved_components() -> tuple[str, ...]:
 class ObservationDataset:
     """Everything a model is allowed to see, plus the hidden ground truth."""
 
-    t: np.ndarray             # (n,) days
-    obs_clean: np.ndarray     # (n, 8 + k) noise-free sensor values, k candidate channels
-    obs: np.ndarray           # (n, 8 + k) noisy sensor values; select columns by channel name
-    q_in: np.ndarray          # (n,) known
-    z_in: np.ndarray          # (n, 14) known
-    truth_reactor: np.ndarray  # (n, 5, 14) ground truth - EVALUATION ONLY
-    truth_y: np.ndarray       # (n, state_size) full ODE state - EVALUATION ONLY
+    t: np.ndarray
+    obs_clean: np.ndarray
+    obs: np.ndarray
+    q_in: np.ndarray
+    z_in: np.ndarray
+    truth_reactor: np.ndarray
+    truth_y: np.ndarray
     channels: tuple[str, ...]
     sigma: float
     seed: int
     clip_fraction: float
     meta: dict[str, Any]
 
-    # -- persistence -------------------------------------------------------
     def save(self, path: Path | str) -> Path:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,7 +164,6 @@ class ObservationDataset:
                 meta=json.loads(str(data["meta"])),
             )
 
-    # -- views -------------------------------------------------------------
     def window(self, t_start: float, t_end: float) -> "ObservationDataset":
         """Time slice, used by the curriculum horizon schedule and by holdout."""
         mask = (self.t >= t_start) & (self.t <= t_end)
@@ -225,7 +216,7 @@ class SensorModel:
                 columns.append(result.tss_reactor[:, int(channel.tank)])
             elif channel.kind == "tss_underflow":
                 columns.append(result.tss_underflow)
-            else:  # pragma: no cover - guarded by the dataclass
+            else:
                 raise ValueError("Unknown sensor kind %r" % (channel.kind,))
         return np.stack(columns, axis=-1)
 

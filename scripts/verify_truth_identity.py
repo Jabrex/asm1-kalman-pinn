@@ -41,9 +41,9 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from scripts import generate_data  # noqa: E402
-from src.data.sensors import NOISE_LEVELS, ObservationDataset  # noqa: E402
-from src.data.simulate import SimulationResult  # noqa: E402
+from scripts import generate_data
+from src.data.sensors import NOISE_LEVELS, ObservationDataset
+from src.data.simulate import SimulationResult
 
 RAW = REPO_ROOT / "results" / "raw"
 MISMATCH_DIRS = ("raw_k025", "raw_k050", "raw_k075", "raw_k100")

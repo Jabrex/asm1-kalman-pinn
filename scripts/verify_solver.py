@@ -38,10 +38,10 @@ from scipy.linalg import expm
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.asm1.continuity import system_inventory, tracer_components  # noqa: E402
-from src.asm1.plant import Bsm1Config, Bsm1Plant, constant_influent  # noqa: E402
-from src.data.influent import BSM1_TABLE5_MEAN, dry_weather, stabilisation_influent  # noqa: E402
-from src.data.simulate import (  # noqa: E402
+from src.asm1.continuity import system_inventory, tracer_components
+from src.asm1.plant import Bsm1Config, Bsm1Plant, constant_influent
+from src.data.influent import BSM1_TABLE5_MEAN, dry_weather, stabilisation_influent
+from src.data.simulate import (
     WARMUP_DAYS,
     SolverSettings,
     integrate,
@@ -49,40 +49,17 @@ from src.data.simulate import (  # noqa: E402
     warm_up,
 )
 
-# The plant is two subsystems with very different numerical character, and they
-# need separate tolerances or the gates measure the wrong thing.
-#
-#   Reactor (70 states)   smooth RHS; BDF converges cleanly.
-#   Settler (90 states)   the Takacs flux limiter is only piecewise continuous:
-#                         its ``min()`` branches switch dozens of times a day and
-#                         the X_t = 3000 threshold is crossed between layers
-#                         essentially always. A non-smooth RHS defeats BDF's
-#                         error estimator, so the settler solids converge, but an
-#                         order of magnitude or two behind the reactor states.
-#
-# This is a property of the published settler model, not of this implementation.
-# The gates therefore hold the reactor to a strict bound and the settler to a
-# documented, still-meaningful one, and print both so the split stays visible.
 TOL_REACTOR = 1e-6
 TOL_SETTLER = 1e-4
 TOL_LINEAR = 1e-6
 TOL_SOLUBLE_TRACER = 1e-8
 TOL_PARTICULATE_TRACER_INERT = 1e-8
-#: With reactions on, BSM1 eq. 46 relabels clarifier sludge with the *current*
-#: feed composition, so an individual particulate species is not conserved when
-#: the reactor composition moves. X_S alone swings by a factor of five over a
-#: day. This bound records the size of that documented approximation; it is not
-#: a solver accuracy target. Gate 3d also runs the same check with reactions off,
-#: where the assumption holds exactly and the tight bound applies.
 TOL_PARTICULATE_TRACER_REACTIVE = 5e-2
 TOL_STEADY = 1e-6
 TOL_IC = 1e-6
 
 PROBE_DAYS = 1.0
 PROBE_POINTS = 25
-#: Closure integrals use the trapezoidal rule, whose O(h^2) error dominates the
-#: check unless the grid is dense. 401 points over two days leaves 2.4e-07,
-#: which says nothing about the model; 3201 points puts it below 1e-8.
 CLOSURE_POINTS = 3201
 
 
@@ -253,10 +230,6 @@ def gate_3d(plant: Bsm1Plant, y0: np.ndarray) -> tuple[bool, dict]:
     if set(tracers) != {"S_I", "X_I"}:
         return False, {"error": "expected S_I and X_I as tracers, got %s" % (tracers,)}
 
-    # The reactions-off plant needs its OWN steady state. Handing it the reactive
-    # plant's state starts a violent transient - biomass that was being sustained
-    # by growth simply washes out - and the closure would then be measuring that
-    # transient rather than the settler.
     inert_plant = Bsm1Plant(Bsm1Config(reaction_scale=0.0))
     q, z = stabilisation_influent()
     _, inert_y0 = integrate(

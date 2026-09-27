@@ -24,7 +24,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.v11_plan import (  # noqa: E402
+from scripts.v11_plan import (
     DATA_DIRS, GATE_D3, NUMERICS_BASELINE_ROOT, NUMERICS_OBSERVER_ROOT, REGIME_DIR, REPO, SIGMA,
     primary_smoother, sigma_tag,
 )

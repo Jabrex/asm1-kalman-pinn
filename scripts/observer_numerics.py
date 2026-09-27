@@ -25,7 +25,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.v11_plan import NUMERICS_JSON, OBSERVER_CONFIG_DIR, REPO, sigma_tag  # noqa: E402
+from scripts.v11_plan import NUMERICS_JSON, OBSERVER_CONFIG_DIR, REPO, sigma_tag
 
 NIS_FACTOR = 3.0
 MAX_DIVERGENCE_RATE = 0.20

@@ -25,7 +25,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.asm1.vault_loader import VAULT_DIR, vault  # noqa: E402
+from src.asm1.vault_loader import VAULT_DIR, vault
 
 PARAMETERS_MD = VAULT_DIR / "Parameters.md"
 COMPOSITION_MD = VAULT_DIR / "Composition and Continuity.md"
@@ -49,7 +49,7 @@ def _table_rows(text: str, heading: str) -> list[list[str]]:
         if all(set(c) <= {"-", " "} for c in cells):
             continue
         rows.append(cells)
-    return rows[1:]  # drop the header row
+    return rows[1:]
 
 
 def check_parameters() -> list[str]:

@@ -36,16 +36,16 @@ from typing import Any
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.ticker import NullFormatter  # noqa: E402
-import numpy as np  # noqa: E402
-from scipy.stats import spearmanr  # noqa: E402
+import matplotlib.pyplot as plt
+from matplotlib.ticker import NullFormatter
+import numpy as np
+from scipy.stats import spearmanr
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.regime_map import PRETTY, TRACK_B, base_model, cell_label  # noqa: E402
-from scripts.figure_layout import COLUMN_IN, DOUBLE_IN, print_style, save_checked  # noqa: E402
-from src.eval.report import save_figure  # noqa: E402
+from scripts.regime_map import PRETTY, TRACK_B, base_model, cell_label
+from scripts.figure_layout import COLUMN_IN, DOUBLE_IN, print_style, save_checked
+from src.eval.report import save_figure
 
 CLASSES = ("sensor-recoverable", "partly recoverable", "forcing-slaved", "anchor-carried")
 CLASS_COLOURS = {"sensor-recoverable": "#2c7bb6", "partly recoverable": "#abd9e9",
@@ -55,16 +55,13 @@ LADDER = ("persistence", "lstm_v10", "pinn", "cl_pinn", "ekf", "eks", "ieks",
           "ode_openloop_reduced", "ode_openloop_full")
 LINE_ESTIMATORS = ("ode_openloop_reduced", "ekf", "eks", "eks_aug")
 POINT_ESTIMATORS = ("cl_pinn", "cl_pinn_theta")
-#: Parameter-recovery inset: the H3 pair (joint state and parameter estimation).
 RECOVERY_ESTIMATORS = ("cl_pinn_theta", "eks_aug")
-#: Laboratory tiers of the G4 lab tables: the start-up panel (Al1) and respirometry (Al2).
 RESPIROMETRY_ASSAYS = ("respirometry",)
 FACTORIAL_ESTIMATORS = ("persistence", "ode_openloop_reduced", "eks", "cl_pinn")
 COLOURS = {"persistence": "0.45", "ode_openloop_reduced": "black", "ode_openloop_full": "0.6",
            "lstm_v10": "tab:green", "pinn": "tab:red", "cl_pinn": "tab:orange", "cl_pinn_theta": "tab:purple",
            "ekf": "tab:cyan", "eks": "tab:blue", "ieks": "navy", "eks_aug": "tab:olive"}
 THRESHOLD_TAU_DAYS = 6.0
-#: Fig. 2c draws indices below this value at the floor (display only; rho uses the actual values).
 INDEX_FLOOR = 1e-4
 WINDOW_DAYS = 12.0
 
@@ -102,7 +99,6 @@ def normalise_recoverability(rec: dict[str, Any]) -> dict[str, Any]:
             assays.append({"tier": tier, "assay": entry["assay"],
                            "ig_gain": {c: float(entry["ig_by_component"][c]) - float(base[c]) for c in base}})
         if not assays:
-            # G4 files written before the per-assay gains: tier gains (panel, then respirometry).
             tiers = labs["tiers"]
             assays = [{"tier": "Al1", "assay": "start-up panel",
                        "ig_gain": {c: float(tiers["Al1"]["ig_by_component"][c]) - float(base[c]) for c in base}},
@@ -200,23 +196,17 @@ def _label(estimator: str) -> str:
     return PRETTY.get(base, base) + estimator[len(base):]
 
 
-# -- print layout -----------------------------------------------------------------
-#: Component names as set in the figures.
 COMPONENT_TEXT = {"S_I": "$S_I$", "S_S": "$S_S$", "X_I": "$X_I$", "X_S": "$X_S$", "X_B_H": "$X_{B,H}$",
                   "X_B_A": "$X_{B,A}$", "X_P": "$X_P$", "S_ND": "$S_{ND}$", "X_ND": "$X_{ND}$",
                   "S_ALK": "$S_{ALK}$", "S_N2": "$S_{N2}$"}
-#: Kinetic names of the parameter-recovery panel, with one marker shape each.
 PARAMETER_TEXT = {"bH": "$b_H$", "muA": "$\\mu_A$", "kh": "$k_h$", "etag": "$\\eta_g$"}
 PARAMETER_MARKERS = {"bH": "o", "muA": "s", "kh": "^", "etag": "D"}
 CLASS_SHORT = {"sensor-recoverable": "sensor", "partly recoverable": "partly", "forcing-slaved": "forcing",
                "anchor-carried": "anchor"}
-#: Classes on a dark fill carry white numbers.
 DARK_CLASSES = ("sensor-recoverable", "anchor-carried")
 WINDOW_TEXT = {"R0": "days 0\u201312", "R2": "days 2\u201312", "F": "days 12\u201314"}
 MINUS = "\u2212"
-#: One label for the primary metric in every figure.
 METRIC_LABEL = "Never-measured NRMSE (fixed R0 range)"
-#: Pre-registered class rules (PREREGISTRATION.md Section 7), shown in the Fig. 2a legend.
 CLASS_RULE = {"sensor-recoverable": "IG \u2265 0.5", "partly recoverable": "all other states",
               "forcing-slaved": "forcing share > 0.5, \u03c4 < 1 d", "anchor-carried": "\u03c4 > 6 d, IG < 0.5"}
 
@@ -253,7 +243,6 @@ def rec_label(rec: dict[str, Any]) -> str:
     return " ".join(p for p in (k, influent, prior) if p)
 
 
-# -- Fig. 2 -----------------------------------------------------------------------
 def fig2_recoverability(rec: dict[str, Any], states: dict[str, Any], validation: Path | None, fig_dir: Path,
                         cell: str, sigma: float, estimators: tuple[str, ...] = ("eks", "cl_pinn")) -> dict[str, Any]:
     """Three files: (a) class map with information gain, (b) memory time, (c) index against error."""
@@ -267,7 +256,6 @@ def fig2_recoverability(rec: dict[str, Any], states: dict[str, Any], validation:
     stats: dict[str, Any] = {"index": index_name, "cell": cell, "sigma": sigma, "estimators": {}, "files": []}
     from matplotlib.colors import ListedColormap
 
-    # (a) class per tank and state, information gain as the number
     fig, ax = plt.subplots(figsize=(DOUBLE_IN, 2.3), layout="constrained")
     colour_idx = np.array([[CLASSES.index(c) if c else -1 for c in row] for row in classes], dtype=float)
     ax.imshow(np.ma.masked_less(colour_idx, 0), cmap=ListedColormap([CLASS_COLOURS[c] for c in CLASSES]),
@@ -288,7 +276,6 @@ def fig2_recoverability(rec: dict[str, Any], states: dict[str, Any], validation:
                loc="outside lower center", ncol=2)
     stats["files"] += [p.name for p in _save(fig, fig_dir / "fig2a_recoverability_classes.png")]
 
-    # (b) start-up memory time
     fig, ax = plt.subplots(figsize=(COLUMN_IN, 2.7), layout="constrained")
     med = np.nanmedian(tau, axis=0)
     lo, hi = np.nanmin(tau, axis=0), np.nanmax(tau, axis=0)
@@ -307,7 +294,6 @@ def fig2_recoverability(rec: dict[str, Any], states: dict[str, Any], validation:
     fig.legend(loc="outside lower center", ncol=1)
     stats["files"] += [p.name for p in _save(fig, fig_dir / "fig2b_memory_time.png")]
 
-    # (c) registered index against the achieved per-state error (H6)
     fig, ax = plt.subplots(figsize=(COLUMN_IN, 3.1), layout="constrained")
     for n_est, estimator in enumerate(estimators):
         err = state_entry(states, cell, sigma, estimator, "R0")
@@ -317,8 +303,6 @@ def fig2_recoverability(rec: dict[str, Any], states: dict[str, Any], validation:
         if val and entry is None:
             raise ValueError("validation file has no %s entry for cell %s; Fig. 2c needs the registered index"
                              % (estimator, cell))
-        # The registered index is the cell's own (its anchor prior and influent view); the
-        # validation file stores those points. Panel (a)'s file is used only without them.
         idx = np.asarray(entry["points_index"], dtype=float) if entry and entry.get("points_index") is not None \
             else index
         mask = np.isfinite(err) & np.isfinite(idx)
@@ -328,14 +312,11 @@ def fig2_recoverability(rec: dict[str, Any], states: dict[str, Any], validation:
                              "scripts use different error definitions" % (rho, estimator, float(entry["rho"])))
         text = "\u03c1 = %s" % _num(rho) if entry is None else "\u03c1 = %s [%s, %s]" % (
             _num(rho), _num(entry["ci"][0]), _num(entry["ci"][1]))
-        # Display only: states with an index below the floor (numerically zero) are drawn at the floor
-        # as open markers; rho above is computed from the actual values.
         shown = np.maximum(idx[mask], INDEX_FLOOR)
         low = idx[mask] < INDEX_FLOOR
         ax.scatter(shown[~low], err[mask][~low], s=9, color=COLOURS.get(estimator), alpha=0.85, linewidths=0,
                    label="%s: %s" % (_label(estimator), text))
         if low.any():
-            # side by side at the floor so that both estimators stay visible
             nudge = (0.8, 1.25)[n_est % 2]
             ax.scatter(np.full(int(low.sum()), INDEX_FLOOR * nudge), err[mask][low], s=14, marker="<",
                        facecolors="none", edgecolors=COLOURS.get(estimator), linewidths=0.7)
@@ -360,7 +341,6 @@ def fig2_recoverability(rec: dict[str, Any], states: dict[str, Any], validation:
     return stats
 
 
-# -- Fig. 3 -----------------------------------------------------------------------
 def fig3_ladder(table: dict[str, Any], fig_dir: Path, cell: str, sigma: float) -> dict[str, Any]:
     """One file per window: median (diamond; value and seed count at the right edge), persistence line.
 
@@ -389,12 +369,10 @@ def fig3_ladder(table: dict[str, Any], fig_dir: Path, cell: str, sigma: float) -
         ax.margins(y=0.08)
         if xlim:
             ax.set_xlim(*xlim)
-        # a range under one decade would otherwise label the minor ticks, and they collide
         ax.xaxis.set_minor_formatter(NullFormatter())
         ax.set_yticks(range(len(ladder)))
         ax.set_yticklabels([_label(e) for e in ladder])
         ax.set_xlabel(METRIC_LABEL)
-        # left-aligned to the figure: the long row labels leave the axes too narrow for the title
         fig.suptitle("(%s) Window %s (%s), %s" % (letter, window, WINDOW_TEXT[window], cell_label(cell)),
                      x=0.02, ha="left")
         handles = [Line2D([], [], marker="D", ls="none", color="black", ms=4,
@@ -405,7 +383,6 @@ def fig3_ladder(table: dict[str, Any], fig_dir: Path, cell: str, sigma: float) -
     return plotted
 
 
-# -- Fig. 4 -----------------------------------------------------------------------
 def _legend_file(handles: list, png: Path, ncol: int = 4) -> list[Path]:
     """A legend drawn on its own, shared by the panels of one figure."""
     rows = -(-len(handles) // ncol)
@@ -441,9 +418,7 @@ def fig4_mismatch(table: dict[str, Any], fig_dir: Path, sigma: float, influent: 
             if not pts:
                 continue
             for p in pts:
-                # side by side at each alpha, clear of the line markers
                 x = p[0] + (0.025 if estimator == "cl_pinn_theta" else -0.025)
-                # Section 9: one-seed and two-seed PINN rows are labelled -- open marker
                 ax.errorbar([x], [p[1]], yerr=[[p[1] - p[2]], [p[3] - p[1]]], fmt="s", ms=4, capsize=2,
                             elinewidth=0.7, capthick=0.7, color=COLOURS.get(estimator),
                             mfc="white" if p[4] < 3 else COLOURS.get(estimator))
@@ -456,10 +431,8 @@ def fig4_mismatch(table: dict[str, Any], fig_dir: Path, sigma: float, influent: 
             ax.axvline(c["alpha_star"], color=COLOURS.get(c["estimator"]), ls=":", lw=0.9)
             plotted["crossovers"].append(c)
         if crossing:
-            # alpha* as coloured ticks on a top axis: no label can sit on a data line
             top = ax.secondary_xaxis("top")
             top.set_xticks([c["alpha_star"] for c in crossing])
-            # a label closer than 0.09 in alpha to the one before it is raised by one line
             texts, raised = [], False
             for k, c in enumerate(crossing):
                 raised = (not raised) and k > 0 and c["alpha_star"] - crossing[k - 1]["alpha_star"] < 0.09
@@ -478,7 +451,6 @@ def fig4_mismatch(table: dict[str, Any], fig_dir: Path, sigma: float, influent: 
 
     handles = [Line2D([], [], ls="--", marker="o", ms=2.5, color=COLOURS["persistence"], label=_label("persistence"))]
     same_f = plotted["series"].get("F", {})
-    # on window F the smoother and the filter forecast from the same day-12 state
     notes = {"ekf": " (equal to EKS on window F)"} if same_f.get("ekf") is not None \
         and same_f.get("ekf") == same_f.get("eks") else {}
     handles += [Line2D([], [], ls="-", marker="o", ms=2.5, color=COLOURS[e], label=_label(e) + notes.get(e, ""))
@@ -517,7 +489,6 @@ def fig4_mismatch(table: dict[str, Any], fig_dir: Path, sigma: float, influent: 
         ax.set_aspect("equal")
     ax.set_xlabel("true ln(truth / vault)")
     ax.set_ylabel("estimated ln(multiplier)")
-    # legend columns (filled top to bottom): estimators and the identity line, then the parameters
     blank = Line2D([], [], ls="none", marker="none", label=" ")
     column1 = [Line2D([], [], ls="none", marker="o", ms=4, color=COLOURS.get(e), label=_label(e))
                for e in RECOVERY_ESTIMATORS if any(base_model(p["estimator"]) == e for p in recovery)]
@@ -536,7 +507,6 @@ def fig4_mismatch(table: dict[str, Any], fig_dir: Path, sigma: float, influent: 
     return plotted
 
 
-# -- Fig. 5 -----------------------------------------------------------------------
 def _grouped_bars(ax, table: dict[str, Any], cells: list[str], sigma: float, labels: list[str]) -> dict[str, Any]:
     width = 0.8 / len(FACTORIAL_ESTIMATORS)
     out: dict[str, Any] = {}

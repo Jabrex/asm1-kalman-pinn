@@ -61,8 +61,6 @@ from ..models.pinn import Asm1Pinn, PinnConfig, component_scale
 from ..observers.anchors import ic_weights_from_rel_std
 from . import curriculum as cl
 
-#: Channels that are prediction targets. ``TSS_ras`` is a settler measurement
-#: used as an input to the recycle reconstruction, not a target.
 TARGET_CHANNELS = tuple(c for c in SENSOR_SET if c.kind != "tss_underflow")
 RAS_CHANNEL = "TSS_ras"
 
@@ -71,29 +69,18 @@ MODEL_SPECS: dict[str, dict[str, str]] = {
     "pinn": {"arch": "pinn", "curriculum": "none"},
     "cl_lstm": {"arch": "lstm", "curriculum": "hierarchical"},
     "lstm": {"arch": "lstm", "curriculum": "none"},
-    # Optional fifth configuration, not part of the 16-run benchmark. It
-    # separates "physics" from "architecture", which the four models above
-    # deliberately bundle together. Enable it explicitly if wanted.
     "pinn_nophysics": {"arch": "pinn", "curriculum": "none"},
-    # Single-axis curriculum ablations (revision experiments): each keeps one
-    # axis of the hierarchical schedule and holds the rest at the single-stage
-    # settings, under the same total step budget.
     "cl_pinn_wonly": {"arch": "pinn", "curriculum": "weights_only"},
     "cl_pinn_honly": {"arch": "pinn", "curriculum": "horizon_only"},
     "cl_pinn_sonly": {"arch": "pinn", "curriculum": "scenario_only"},
     "cl_pinn_smonly": {"arch": "pinn", "curriculum": "smoothing_only"},
-    # v1.1 joint state-parameter estimation (E7): cl_pinn plus trainable
-    # log-multipliers on RunConfig.trainable_kinetics. Same schedule and budget.
     "cl_pinn_theta": {"arch": "pinn", "curriculum": "hierarchical"},
 }
 
-#: Every channel a run may name in ``target_channels``.
 KNOWN_CHANNELS: dict[str, SensorChannel] = {
     c.name: c for c in (*SENSOR_SET, *CANDIDATE_CHANNELS)
 }
-#: Anchor-file arrays the Trainer reads; each is (n_tanks, n_components).
 ANCHOR_KEYS: tuple[str, ...] = ("z0_mean", "z0_rel_std", "nominal_ss")
-#: Influent knowledge modes of src.data.influent_views (group G2).
 INFLUENT_MODES: tuple[str, ...] = ("exact", "composite", "composite_biased")
 
 
@@ -117,25 +104,17 @@ class RunConfig:
     log_every: int = 100
     device: str = "cuda"
     dtype: str = "float32"
-    # Restrict the initial-condition anchor to the directly sensed tank/component
-    # entries instead of the full 5x14 state (revision ablation).
     ic_measured_only: bool = False
-    # v1.1: constrain the total derivative along the influent trajectory
-    # (False reproduces the v1.0 partial-derivative residual bit for bit).
     total_derivative: bool = False
-    # v1.1: causal trailing average over this many RAS TSS samples before the
-    # curriculum smoothing; 1 disables it (v1.0 behaviour).
     ras_filter_window: int = 1
-    # Free-form suffix appended to the run id by scripts/run_all.py variants.
     variant: str = ""
-    # v1.1 regime settings. Every default reproduces the v1.0 run bit for bit.
-    anchor_file: str | None = None          # None: truth Z(0) as in v1.0 (A0)
-    influent_mode: str = "exact"            # src.data.influent_views modes
-    target_channels: list[str] | None = None  # None: TARGET_CHANNELS
+    anchor_file: str | None = None
+    influent_mode: str = "exact"
+    target_channels: list[str] | None = None
     trainable_kinetics: list[str] = field(default_factory=list)
-    kinetic_prior_sigma: float = 0.693      # prior sd of each log-multiplier (ln 2)
+    kinetic_prior_sigma: float = 0.693
     kinetic_prior_weight: float = 1e-3
-    kinetic_bound: float = 4.0              # multipliers stay in [1/bound, bound]
+    kinetic_bound: float = 4.0
     pinn: dict[str, Any] = field(default_factory=dict)
     lstm: dict[str, Any] = field(default_factory=dict)
 
@@ -331,9 +310,6 @@ class Trainer:
         self.provenance = data_provenance(
             loaded["dry"].meta, loaded["constant"].meta, cfg.anchor_file
         )
-        # The influent view is applied to the full series before any window, so
-        # features, collocation, physics residual and balance loss all see the
-        # same practitioner influent ("exact" is the identity).
         self.data = {key: view_dataset(ds, cfg.influent_mode) for key, ds in loaded.items()}
         self.train_set = self.data["dry"].window(0.0, cfg.train_end_day)
 
@@ -342,9 +318,6 @@ class Trainer:
         self.target_cols = [self.channel_index[c.name] for c in self.target_channels]
         self.ras_col = self.channel_index[RAS_CHANNEL]
 
-        # Initial condition: a supplied boundary condition for every model.
-        # v1.0 path: the truth state at t = 0. Anchor path: the anchor mean, and
-        # truth_reactor is never read.
         self.anchor: Anchor | None = None
         self.nominal_ss: np.ndarray | None = None
         if cfg.anchor_file:
@@ -361,17 +334,12 @@ class Trainer:
 
         self.model = self._build_model()
         self.operator = ObservationOperator(self.plant, self.target_channels)
-        # With ic_measured_only the anchor covers only the directly sensed
-        # (tank, component) entries; the default anchors the full known state.
         ic_mask = None
         if cfg.ic_measured_only:
             ic_mask = np.zeros((self.n_tanks, self.n_components))
             for channel in self.target_channels:
                 if channel.kind == "state":
                     ic_mask[int(channel.tank), self.vault.index(str(channel.component))] = 1.0
-        # Anchor files weight the IC entries by their inverse log-variance
-        # (uniform rel_std gives weight 1 everywhere, i.e. the v1.0 mean). The
-        # constant stage uses the same weights.
         self.ic_weights: np.ndarray | None = None
         if self.anchor is not None:
             self.ic_weights = ic_weights_from_rel_std(self.anchor.z0_rel_std)
@@ -388,8 +356,6 @@ class Trainer:
             ic_mask=ic_mask,
             ic_weights=self.ic_weights,
         )
-        # Joint kinetic estimation (cl_pinn_theta). Created after the network so
-        # the network initialisation consumes the same random numbers as cl_pinn.
         self.adapter: KineticAdapter | None = None
         if cfg.trainable_kinetics:
             allowed = kinetic_parameter_names(self.vault)
@@ -408,7 +374,6 @@ class Trainer:
         self._tensor_cache: dict[tuple[str, int, float], dict[str, torch.Tensor]] = {}
         self.history: list[dict[str, float]] = []
 
-    # -- construction ------------------------------------------------------
     def _build_model(self) -> torch.nn.Module:
         from ..models.features import FeatureConfig
 
@@ -444,7 +409,6 @@ class Trainer:
             return weights.scaled(physics=0.0, balance=0.0)
         return weights
 
-    # -- tensor preparation ------------------------------------------------
     def _stage_tensors(self, stage: cl.CurriculumStage) -> dict[str, torch.Tensor]:
         key = (stage.dataset, stage.smoothing_window, stage.horizon_days)
         cached = self._tensor_cache.get(key)
@@ -459,9 +423,6 @@ class Trainer:
 
         raw = source.obs
         if self.cfg.ras_filter_window > 1:
-            # Causal filter on the raw noisy RAS signal first, so the PINN, the
-            # EKF and the baselines all see the same input; the window always
-            # starts at t = 0, so filtering after slicing changes nothing.
             raw = raw.copy()
             raw[:, self.ras_col] = cl.trailing_average(
                 raw[:, self.ras_col], self.cfg.ras_filter_window
@@ -474,8 +435,6 @@ class Trainer:
             )
 
         if self.anchor is not None:
-            # No truth read: the anchor mean for the dry stages, the nominal
-            # steady state for the constant stage (the nominal plant made it).
             z0_stage = self.nominal_ss if stage.dataset == "constant" else self.z0
         else:
             z0_stage = source.truth_reactor[0]
@@ -512,8 +471,6 @@ class Trainer:
         def interp(x: torch.Tensor) -> torch.Tensor:
             return x[lo] * (1.0 - w) + x[hi] * w
 
-        # Slope of the same linear interpolant on the segment [lo, hi]; zero at
-        # the right end of the grid where hi == lo.
         span = (t_grid[hi] - t_grid[lo]).unsqueeze(-1)
         same = (hi == lo).unsqueeze(-1)
         safe = torch.where(same, torch.ones_like(span), span)
@@ -530,7 +487,6 @@ class Trainer:
             "dz_dt": slope(batch["z_in"]),
         }
 
-    # -- training ----------------------------------------------------------
     def trainable_parameters(self) -> list[torch.nn.Parameter]:
         """Network parameters, plus the kinetic log-multipliers for cl_pinn_theta."""
         params = list(self.model.parameters())
@@ -549,9 +505,6 @@ class Trainer:
         cfg = self.cfg
         batch = self._stage_tensors(stage)
         z = self.model(batch["t"], batch["q_in"], batch["z_in"])
-        # The grid starts at t = 0, so the first prediction is the initial
-        # condition. Reusing it keeps the LSTM hidden state consistent with
-        # the sequence it was rolled out on.
         z0_pred = z[:1]
 
         if cfg.arch == "pinn" and weights.physics > 0.0:
@@ -627,7 +580,6 @@ class Trainer:
         elapsed = time.perf_counter() - started
         return self.finalise(elapsed)
 
-    # -- output ------------------------------------------------------------
     @torch.no_grad()
     def predict(self, dataset: ObservationDataset) -> np.ndarray:
         """Predicted reactor states ``(n, 5, 14)`` for an arbitrary dataset."""
@@ -715,7 +667,7 @@ def main(config_path: str) -> dict[str, Any]:
     return Trainer(cfg).train()
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     import sys
 
     if len(sys.argv) != 2:

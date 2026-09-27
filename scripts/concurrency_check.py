@@ -20,7 +20,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.v11_plan import CONCURRENCY, REPO, Job, determinism_job, realistic_k, smoke_queue  # noqa: E402
+from scripts.v11_plan import CONCURRENCY, REPO, Job, determinism_job, realistic_k, smoke_queue
 
 REL_TOL = 1e-5
 MIN_GAIN = 1.25

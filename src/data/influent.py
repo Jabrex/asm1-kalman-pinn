@@ -58,8 +58,6 @@ import numpy as np
 
 from ..asm1.vault_loader import Asm1Vault, vault
 
-# --- BSM1 anchors ---------------------------------------------------------
-#: BSM1 Table 5, load averages for the stabilisation period (report p.13).
 BSM1_TABLE5_MEAN: Mapping[str, float] = {
     "S_I": 30.00,
     "S_S": 69.50,
@@ -74,29 +72,22 @@ BSM1_TABLE5_MEAN: Mapping[str, float] = {
     "S_ND": 6.95,
     "X_ND": 10.59,
     "S_ALK": 7.00,
-    "S_N2": 0.0,  # not part of BSM1; the vault carries S_N2 and influent N2 is nil
+    "S_N2": 0.0,
 }
-BSM1_TABLE5_FLOW = 18446.0  # m3/d
+BSM1_TABLE5_FLOW = 18446.0
 
-#: Read off BSM1 Figure 3 (report p.12). Figure readings, not table values.
-BSM1_FIG3_FLOW_RANGE = (10000.0, 32000.0)          # m3/d
+BSM1_FIG3_FLOW_RANGE = (10000.0, 32000.0)
 BSM1_FIG3_CONC_RANGE: Mapping[str, tuple[float, float]] = {
     "S_S": (55.0, 120.0),
     "S_NH": (15.0, 45.0),
     "X_S": (100.0, 300.0),
 }
-#: Weekend peaks are visibly lower than weekday peaks in BSM1 Figure 3.
-#: This factor is a figure reading, not a published number.
 BSM1_FIG3_WEEKEND_PEAK_FACTOR = 0.85
 
-#: Rain-event peak flow, read off BSM1 Figure 5 (report p.13).
-BSM1_FIG5_RAIN_PEAK_FLOW = 52000.0  # m3/d
+BSM1_FIG5_RAIN_PEAK_FLOW = 52000.0
 
-#: Components held constant in any influent - BSM1 section 2.4 (report p.11).
 BSM1_CONSTANT_COMPONENTS = ("S_O", "S_NO", "X_B_A", "X_P", "S_ALK", "S_N2")
 
-#: Family assignment for components without their own published diurnal range.
-#: Each family follows the normalised shape of its published representative.
 COMPONENT_FAMILY: Mapping[str, str] = {
     "S_I": "S_S",
     "S_S": "S_S",
@@ -113,11 +104,11 @@ COMPONENT_FAMILY: Mapping[str, str] = {
 class ProfileShape:
     """Daily-curve shape parameters. NOT sourced - these set form, not level."""
 
-    first_harmonic_phase: float = 1.4    # rad, places the morning peak
-    second_harmonic_weight: float = 0.45  # relative weight of the 12 h harmonic
-    second_harmonic_phase: float = 0.6   # rad, splits morning and evening peaks
-    load_lead_hours: float = 1.5         # load peak leads the flow peak
-    weekend_days: tuple[int, ...] = (5, 6)  # 0 = first simulated day
+    first_harmonic_phase: float = 1.4
+    second_harmonic_weight: float = 0.45
+    second_harmonic_phase: float = 0.6
+    load_lead_hours: float = 1.5
+    weekend_days: tuple[int, ...] = (5, 6)
 
 
 @dataclass(frozen=True)
@@ -132,10 +123,10 @@ class RainEvent:
     the event is spent rising, and it does not affect the peak or the duration.
     """
 
-    start_day: float = 8.0        # figure reading, BSM1 Fig. 5 (report p.13)
-    duration_days: float = 3.0    # figure reading, BSM1 Fig. 5 (report p.13)
+    start_day: float = 8.0
+    duration_days: float = 3.0
     peak_flow: float = BSM1_FIG5_RAIN_PEAK_FLOW
-    rise_fraction: float = 0.25   # NOT sourced - shape only
+    rise_fraction: float = 0.25
 
 
 @dataclass(frozen=True)
@@ -155,7 +146,6 @@ def _ratio_exponent(low: float, high: float) -> float:
     return 0.5 * np.log(high / low)
 
 
-#: Search bracket for the peakiness exponent (see ``_solve_peakiness``).
 _PEAKINESS_BRACKET = (1e-3, 1e3)
 
 
@@ -214,18 +204,6 @@ class InfluentGenerator:
         if missing:
             raise ValueError("No influent anchor for components: %s" % sorted(missing))
 
-        # The raw double-peak shape is asymmetric: its peak and its trough are
-        # not the same height. Dividing by max|raw| would pin only one end, and
-        # the achieved max/min ratio would come out as exp(b * span) with
-        # span < 2. Map affinely onto [-1, 1] instead, so both ends are pinned
-        # and span is exactly 2. The mean of u is then non-zero, which does not
-        # matter: the exp-mean normalisation below fixes the mean afterwards.
-        # The extremes are phase independent in the continuum, so a lead-shifted
-        # evaluation has the same min and max. On a discrete grid it does not:
-        # a shifted sample can land a hair outside the unshifted grid's range.
-        # A fine grid keeps that excursion at the 1e-8 level and _unit_shape
-        # clips what is left, which matters because a fractional power of a
-        # negative base is NaN.
         grid = np.linspace(0.0, 1.0, 20001, endpoint=False)
         raw = self._raw_shape(grid, 0.0)
         self._raw_min = float(np.min(raw))
@@ -234,10 +212,6 @@ class InfluentGenerator:
             raise ValueError("The daily shape is flat; check ProfileShape")
         self._grid = grid
 
-        # Flow carries a weekday/weekend factor on top of the daily curve, so the
-        # observed 14-day range is the product of the two. Discount the weekly
-        # spread from the daily exponent, otherwise the full-series ratio
-        # overshoots the figure reading.
         self._weekly = self._weekly_factors()
         weekly_ratio = float(np.max(self._weekly) / np.min(self._weekly))
         self._flow_b = _ratio_exponent(*self.spec.flow_range) - 0.5 * np.log(weekly_ratio)
@@ -247,8 +221,6 @@ class InfluentGenerator:
                 "weekly ratio %.4f vs flow range ratio %.4f"
                 % (weekly_ratio, self.spec.flow_range[1] / self.spec.flow_range[0])
             )
-        # Peakiness is solved per signal so that the published mean, minimum and
-        # maximum are all met, not just two of the three.
         unit = self._unit_shape(grid, 0.0)
         self._flow_p = _solve_peakiness(
             unit, self._flow_b, self.spec.flow_mean, self.spec.flow_range[1],
@@ -256,8 +228,6 @@ class InfluentGenerator:
         )
         self._flow_norm = self._exp_mean(self._flow_b, 0.0, self._flow_p)
 
-        # Concentrations carry no weekly factor, so their exponent is the plain
-        # half-log of the published range.
         self._conc_b: dict[str, float] = {}
         self._conc_p: dict[str, float] = {}
         self._conc_norm: dict[str, float] = {}
@@ -272,7 +242,6 @@ class InfluentGenerator:
 
         self._rain_gain = self._solve_rain_gain()
 
-    # -- shape helpers -----------------------------------------------------
     def _raw_shape(self, t: np.ndarray | float, lead: float) -> np.ndarray:
         sh = self.spec.shape
         tau = np.asarray(t, dtype=float) + lead
@@ -307,7 +276,6 @@ class InfluentGenerator:
         n_days = max(int(np.ceil(self.spec.duration_days)), 7)
         return np.tile(pattern, int(np.ceil(n_days / 7)) + 1)
 
-    # -- rain --------------------------------------------------------------
     def _rain_shape(self, t: np.ndarray | float) -> np.ndarray:
         """Smooth asymmetric pulse in [0, 1], zero outside the event window."""
         rain = self.spec.rain
@@ -329,11 +297,9 @@ class InfluentGenerator:
         t = np.linspace(rain.start_day, rain.start_day + rain.duration_days, 4001)
         dry = self._dry_flow(t)
         pulse = self._rain_shape(t)
-        # maximise over the event: dry + gain*pulse == peak_flow at the argmax
         gains = np.where(pulse > 1e-12, (rain.peak_flow - dry) / np.maximum(pulse, 1e-12), np.inf)
         return float(np.min(gains))
 
-    # -- signals -----------------------------------------------------------
     def _dry_flow(self, t: np.ndarray | float) -> np.ndarray:
         t = np.asarray(t, dtype=float)
         day = np.clip(np.floor(t).astype(int), 0, len(self._weekly) - 1)
@@ -369,8 +335,6 @@ class InfluentGenerator:
             out[..., i] = mean * np.exp(b * self._shape(t, lead, p)) / norm
 
         if self.spec.rain is not None:
-            # Rain water carries no pollutant load: the catchment signal is
-            # diluted so that the pollutant mass flow is preserved.
             dry = self._dry_flow(t)
             total = self.flow(t)
             dilution = (dry / np.maximum(total, 1e-12))[..., None]
@@ -388,7 +352,6 @@ class InfluentGenerator:
         t = np.asarray(t, dtype=float)
         return self.flow(t), self.concentrations(t)
 
-    # -- reporting ---------------------------------------------------------
     def summary(self, n: int = 20001) -> dict[str, object]:
         """Achieved statistics, for comparison against the BSM1 anchors."""
         t = np.linspace(0.0, self.spec.duration_days, n)
@@ -412,9 +375,6 @@ class InfluentGenerator:
         if self.spec.rain is not None:
             stats["rain_peak_achieved"] = float(np.max(q))
             stats["rain_peak_target"] = self.spec.rain.peak_flow
-            # The dry-weather mean is the anchor for the *dry* component; the
-            # rain event adds water on top, so the series mean is legitimately
-            # higher and must not be read as a miss against Table 5.
             stats["flow_mean_note"] = (
                 "series mean includes the rain event; the Table 5 anchor applies "
                 "to the dry-weather component only"

@@ -24,7 +24,6 @@ def test_gate_6a_total_passes_and_discriminates(probe_trainer):
     ok, detail = gate_6a_total(probe_trainer)
     assert ok, detail
     assert detail["max_per_output_relative_error_total"] < TOL_AUTOGRAD
-    # the v1.0 partial derivative is far from the trajectory derivative
     assert detail["max_per_output_relative_error_partial_vs_trajectory"] > 1e-2
 
 

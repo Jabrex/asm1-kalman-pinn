@@ -33,14 +33,12 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.train.run import RunConfig, Trainer  # noqa: E402
+from src.train.run import RunConfig, Trainer
 
 TOL_AUTOGRAD = 1e-4
 TOL_MODE_AGREEMENT = 1e-6
 PROBE_STEPS = 200
 PROBE_NOISE = 0.05
-#: Off-knot evaluation times for gate 6a': 0.6 + 0.25 k days sit 0.4 of a
-#: 15-min sample past a knot, far from any slope change at h = 1e-6.
 OFF_KNOT_TIMES = 0.5 + np.arange(16) * 0.25 + 0.1
 
 
@@ -55,8 +53,6 @@ def _trainer(model: str = "cl_pinn", steps: int = PROBE_STEPS, total_derivative:
         dtype="float64",
         device="cpu",
         total_derivative=total_derivative,
-        # Probe runs are scratch output: keep them out of results/runs, whose
-        # _verify_* directories are the archived v1.0 artefacts.
         out_dir="results/v11/_verify",
     )
     return Trainer(cfg)
@@ -171,7 +167,6 @@ def gate_6c() -> tuple[bool, dict]:
     """The physics term must reach the parameters and must change the outcome."""
     with_physics = _trainer("cl_pinn")
 
-    # (i) gradient of the residual alone is non-zero
     first_stage = with_physics.schedule.stages[0]
     batch = with_physics._stage_tensors(first_stage)
     colloc = with_physics._collocation(first_stage, batch)
@@ -190,7 +185,6 @@ def gate_6c() -> tuple[bool, dict]:
                        if p.grad is not None))
     )
 
-    # (ii) a short run with the physics weight on leaves a smaller residual
     res_on = _final_residual("cl_pinn")
     res_off = _final_residual("pinn_nophysics")
 

@@ -37,14 +37,14 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.data.sensors import ObservationDataset, unobserved_components  # noqa: E402
-from src.eval.metrics import per_tank_nrmse, state_metrics  # noqa: E402
-from src.eval.report import save_figure  # noqa: E402
+from src.data.sensors import ObservationDataset, unobserved_components
+from src.eval.metrics import per_tank_nrmse, state_metrics
+from src.eval.report import save_figure
 
 RAW = Path("results/raw")
 SEED_DIRS = {0: Path("results/runs"), 1: Path("results/runs_seed1"), 2: Path("results/runs_seed2")}
@@ -54,10 +54,8 @@ SIGMAS = (0.0, 0.05, 0.10, 0.15)
 HOLDOUT = (12.0, 14.0)
 TRAIN_END = 12.0
 HEAT_SIGMA = 0.10
-#: Window names as they read in figure text (the v1.0 wording for the holdout).
 WINDOW_TEXT = {"holdout": "holdout", "train": "estimation window (days 0-12)"}
 TABLE_MODELS = ("cl_pinn", "pinn", "cl_lstm", "lstm", "persistence")
-#: Non-learned rows: never marked bold as "best learned model".
 BASELINE_MODELS = ("persistence", "odesim", "ode_openloop", "ode_openloop_reduced", "ode_openloop_full")
 TITLES = {"cl_pinn": "Curriculum PINN", "pinn": "Single-stage PINN", "cl_pinn_theta": "PINN with kinetic multipliers",
           "eks": "Extended Kalman smoother", "eks_aug": "Augmented extended Kalman smoother"}
@@ -125,18 +123,15 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-#: Split-layout text (typographic dash) and the estimator names of the other v1.1 figures.
 SPLIT_WINDOW_TEXT = {"holdout": "held-out days 12\u201314", "train": "days 0\u201312"}
 SPLIT_TITLES = {"cl_pinn": "CL-PINN", "pinn": "PINN, single-stage", "cl_pinn_theta": "PINN-$\\theta$",
                 "eks": "EKS", "eks_aug": "Aug. EKS"}
-#: Drawn in this order, the CL-PINN last and on top: (colour, line style, width, name).
 TRAJECTORY_STYLE = {
     "persistence": ("0.4", ":", 0.9, "Persistence"),
     "eks": ("tab:blue", "--", 0.9, "EKS"),
     "pinn": ("tab:red", "-.", 0.8, "PINN, single-stage"),
     "cl_pinn": ("tab:orange", "-", 1.1, "CL-PINN"),
 }
-#: The y axis is fitted to the curves after this time, so that one start value cannot flatten the panel.
 TRAJECTORY_YFIT_AFTER_D = 0.05
 TRAJECTORY_COMPONENTS = ("X_B_H", "X_S", "S_ND")
 TRAJECTORY_TANKS = (0, 4)
@@ -261,7 +256,6 @@ def main(argv: list[str] | None = None) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / ("component_table%s.json" % args.tag)).write_text(json.dumps(table, indent=2), encoding="utf-8")
 
-    # --- LaTeX rows: Track B components at the heat sigma ---------------------
     track_b = unobserved_components()
     cols = [m for m in args.table_models if tag(args.heat_sigma) in table.get(m, {})]
     key = tag(args.heat_sigma)
@@ -285,9 +279,6 @@ def main(argv: list[str] | None = None) -> None:
     if args.no_figures:
         return
 
-    # --- heatmap ---------------------------------------------------------------
-    # Stacked panels: at text width (about 16 cm) the cell annotations stay
-    # legible, which they do not in a side-by-side layout.
     heat_models = [m for m in args.heat_models if m in heat]
     if args.figure_layout == "split":
         fig_dir.mkdir(parents=True, exist_ok=True)
@@ -334,7 +325,6 @@ def main(argv: list[str] | None = None) -> None:
             print("%s heatmap max cell %.3f; per-tank Track B mean by tank:" % (model, np.nanmax(heat[model])),
                   np.round(np.nanmean(heat[model][:, [components.index(c) for c in track_b]], axis=1), 3))
 
-    # --- trajectories ------------------------------------------------------------
     hold, _ = truth_for(args.heat_sigma, Path(args.data_dir), args.window)
     t = hold.t
     truth = hold.truth_reactor

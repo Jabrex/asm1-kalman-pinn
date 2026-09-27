@@ -23,7 +23,7 @@ def dry():
 
 
 def test_flow_mean_is_exactly_the_table_5_value(dry):
-    t = np.linspace(0.0, 14.0, 40321)  # 30 s resolution over two whole weeks
+    t = np.linspace(0.0, 14.0, 40321)
     assert np.mean(dry.flow(t)) == pytest.approx(BSM1_TABLE5_FLOW, rel=1e-3)
 
 

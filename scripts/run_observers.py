@@ -32,7 +32,6 @@ KINETICS_DIRS = {"k000": "results/raw", "k025": "results/raw_k025", "k050": "res
                  "k075": "results/raw_k075", "k100": "results/raw_k100",
                  "k000_off": "results/raw_k000_off"}
 INFLUENT_TAGS = {"exact": "ie", "composite": "ic", "composite_biased": "ib"}
-# "_frozenq" matches src.observers.cell_inputs.run_dir_name (G6 naming).
 Q_SUFFIX = {"tuned": "", "frozen": "_frozenq", "fixed": "_qfixed"}
 CELL_KEYS = ("sigmas", "realisations", "estimators", "q_modes", "q_fixed", "q_criterion",
              "ras_filter_window", "ras_mode", "target_channels", "augment", "augment_file",
@@ -60,7 +59,6 @@ def expand_cells(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     if rand:
         for i in range(int(rand["count"])):
             cells.append({**defaults, "name": "rand%02d_ie_a0" % i, "influent_mode": "exact",
-                          # G2 writes the random plants as raw_rand/00..49; anchors follow suit.
                           "data_dir": "%s/%02d" % (rand["data_root"], i),
                           "anchor_file": "%s/%02d/A0.npz" % (rand["anchors_root"], i)})
     for cell in cells:
@@ -169,7 +167,7 @@ def run_job(job: dict[str, Any], out_root: str, frozen_q: list[float] | None) ->
             (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=float),
                                                   encoding="utf-8")
         return {"job": _label(job), "ok": True, "seconds": elapsed}
-    except Exception:  # noqa: BLE001 - one failed job must not stop the grid
+    except Exception:
         out.mkdir(parents=True, exist_ok=True)
         err = out / ("error_%s.txt" % _label(job).replace("/", "_"))
         err.write_text(traceback.format_exc(), encoding="utf-8")
@@ -219,7 +217,6 @@ def main(argv: list[str] | None = None) -> int:
 
         cfg = cell_inputs.load_cell_config(args.config)
         for s, r in itertools.product(cfg["sigmas"], cfg["realisations"]):
-            # Fail fast in the parent: data file, anchor and channel set must all resolve.
             cell_inputs.prepare_cell_inputs(cfg, float(s), int(r),
                                             train_end_day=float(cfg["tune_window_days"][1]))
         out_root = Path(cfg["out_dir"]).parent
@@ -263,8 +260,6 @@ def main(argv: list[str] | None = None) -> int:
                               else "FAILED -> " + res["error"]), flush=True)
 
     if args.workers <= 1:
-        # One worker: run in this process. A pool would hold a second copy of torch
-        # (about 0.4 GB) per cell, which halves how many cells fit in memory.
         _init_worker()
         for job in jobs:
             report(run_job(job, str(out_root), frozen_q))
