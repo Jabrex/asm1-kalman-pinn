@@ -4,8 +4,8 @@ What every tracked file in this repository does. The code files carry no
 comments; this guide and the module docstrings are the documentation. The
 generated datasets, training runs, estimator outputs, figures and tables live in
 `results/`, which is not tracked in git (see the `.gitignore`); they are archived
-on Zenodo under the concept DOI 10.5281/zenodo.22304281 and can be regenerated
-with [RUNBOOK.en.md](RUNBOOK.en.md).
+on Zenodo (the DOI is on the GitHub Releases page) and can be regenerated with
+[RUNBOOK.en.md](RUNBOOK.en.md).
 
 ## Top level
 

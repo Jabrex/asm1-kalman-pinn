@@ -8,10 +8,10 @@ against LSTM baselines.
 every file does. The pipeline has been executed end-to-end; the generated
 datasets, all training runs (including the three-seed replication and the
 ablations), the estimator outputs, the benchmark tables and the figures reported
-in the accompanying manuscript are archived on Zenodo under the concept DOI
-[10.5281/zenodo.22304281](https://doi.org/10.5281/zenodo.22304281). `results/` is
-not tracked in this repository; download the archive into it or regenerate it
-with the RUNBOOK, which gives the exact order.
+in the accompanying manuscript are archived on Zenodo; the DOI of each release is
+listed on the GitHub Releases page and in the manuscript. `results/` is not
+tracked in this repository; download the archive into it or regenerate it with
+the RUNBOOK, which gives the exact order.
 
 ---
 
