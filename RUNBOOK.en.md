@@ -1,7 +1,9 @@
 # RUNBOOK — order of execution
 
 This file lists the steps, in order, that regenerate every dataset, run, table
-and figure in this repository.
+and figure of the project. Steps 1–11 are the v1.0 benchmark; step 12 is the
+v1.1 study of the manuscript (Kalman filter versus PINN for never-measured ASM1
+states).
 
 Rule: **if a step reports FAIL, do not move on to the next one.** Every gate
 verifies an assumption that the following step relies on.
@@ -27,9 +29,11 @@ cloned into).
 | 9 | `python -m scripts.run_all --profile full` | 1.5–7 h | `results/runs/*` |
 | 10 | `python -m scripts.make_report` | < 1 min | `results/benchmark.*` |
 | 11 | replication, ablation and baseline runs (see below) | 2–4 h | `results/runs_*`, `results/seed_bands.json`, paper figures |
+| 12 | the v1.1 study: truth facilities, anchors, estimator grid, GPU runs, recoverability, regime map (see below) | 3–4 days | `results/raw_k*`, `results/v11/*` |
 
 Steps 7 + 8 prove cheaply that the pipeline runs end to end. The numbers that
-enter the report come from steps 9–11. The numbering matches the
+enter the v1.0 report come from steps 9–11; step 12 is the v1.1 study reported
+in the manuscript. The numbering matches the
 `step N clear` messages printed by the scripts.
 
 ---
@@ -411,6 +415,193 @@ All figures are written as 600 dpi PNG plus a vector PDF twin by
 
 ---
 
+## 12 — The v1.1 study: truth facilities, anchors, estimator grid, recoverability and regime map
+
+This step produces everything the manuscript *Kalman filter versus
+physics-informed neural network for unmeasured activated sludge states* reports.
+It reuses steps 0–6 (environment, vault, solver and model gates) and the K0 data
+of step 4 (`results/raw`). The registration ([PREREGISTRATION.md](PREREGISTRATION.md),
+tag `v1.1.0-prereg`) fixes the hypotheses, the grid and the decision rules;
+`scripts.run_core` and `scripts.observer_grid run --stage grid` refuse to start
+when the frozen files differ from the tag. Cell codes (K0 … K1, Ie/Ic/Ib,
+A0/As/Al1/Al2) are defined in Section 2 of the registration. Every command runs
+from the repository root with the step 0 environment; the CPU estimator runs
+want one BLAS thread per process (`OMP_NUM_THREADS=1`, `MKL_NUM_THREADS=1`,
+`OPENBLAS_NUM_THREADS=1`).
+
+### 12.1 Truth facilities (data directories)
+
+K.25, K.5, K.75 and K1 are the K0 facility with other kinetics
+(`src/asm1/truth_plants.py`). Their constant-load scenario comes from the
+nominal facility (`--constant-from nominal`), and the candidate probes of the
+sensor-subset analysis are recorded next to the eight standard channels
+(`--candidate-channels`):
+
+```bash
+python -m scripts.generate_data --truth-preset graded --alpha 0.25 --constant-from nominal --candidate-channels --out results/raw_k025
+python -m scripts.generate_data --truth-preset graded --alpha 0.5  --constant-from nominal --candidate-channels --out results/raw_k050
+python -m scripts.generate_data --truth-preset graded --alpha 0.75 --constant-from nominal --candidate-channels --out results/raw_k075
+python -m scripts.generate_data --truth-preset bsm1_15c           --constant-from nominal --candidate-channels --out results/raw_k100
+```
+
+Nine further noise realisations at sigma 0.10 for the two realisation cells, the
+off-steady start (M0') and the fifty random-mismatch facilities:
+
+```bash
+python -m scripts.generate_data --realisations-only --noise-realisations 10 --out results/raw
+python -m scripts.generate_data --realisations-only --noise-realisations 10 --out results/raw_k100
+python -m scripts.generate_data --offsteady-days 14 --out results/raw_k000_off
+python -m scripts.generate_random_truths --n 50 --sigma-log 0.3 --seed 0 --workers 4
+```
+
+**Gates.** The K1 facility must reproduce the published BSM1 open-loop steady
+state within the pre-declared tolerances, and every truth directory must pass
+the identity checks:
+
+```bash
+python -m scripts.verify_bsm1_truth          # results/v11/bsm1_gate.json
+python -m scripts.verify_truth_identity      # results/v11/data_checksums.json
+```
+
+### 12.2 Anchors (start-up knowledge)
+
+The nominal ensemble (200 members, all 15 kinetic constants perturbed
+lognormally with sigma_log 0.6) gives the As uncertainty; then one call per
+truth directory writes A0, As, Al1 and Al2:
+
+```bash
+python -m scripts.make_anchors --build-ensemble                                     # results/v11/anchors/nominal_ensemble.npz
+python -m scripts.make_anchors --data-dir results/raw      --out results/v11/anchors/k000
+python -m scripts.make_anchors --data-dir results/raw_k025 --out results/v11/anchors/k025
+python -m scripts.make_anchors --data-dir results/raw_k050 --out results/v11/anchors/k050
+python -m scripts.make_anchors --data-dir results/raw_k075 --out results/v11/anchors/k075
+python -m scripts.make_anchors --data-dir results/raw_k100 --out results/v11/anchors/k100
+```
+
+The variant anchors of the registration (Section 6.2) use the same script:
+`--lab-seed` for the nine further laboratory draws (`anchors/k050_lab/r01` …),
+`--build-ensemble --sigma-log 0.4` or `0.8` with `--ensemble` for the
+anchor-spread variants (`anchors/k100_slog04`, `k100_slog08`), and
+`results/raw_k000_off` for M0'. Each anchor directory carries an
+`anchors_report.json` with the RMS log error of every anchor against the true
+state at t = 0.
+
+### 12.3 Numerics stage, gate D3 and the registration
+
+The numerics stage runs the filters at sigma 0.10 in every main cell before the
+registration; it is read only through the filter diagnostics (divergence,
+primary-smoother choice) and gate D3, never through hidden-state errors:
+
+```bash
+python -m scripts.observer_grid write --stage numerics
+python -m scripts.observer_grid contract                     # the G1-G5 contract: what the runs assume exists
+python -m scripts.observer_grid run --stage numerics --workers 12
+python -m scripts.observer_grid run --stage numerics --family numerics_ieks --workers 12
+python -m scripts.observer_grid baselines --stage numerics --workers 12
+python -m scripts.observer_numerics                          # results/v11/observer_numerics.json
+python -m scripts.gate_d3                                    # results/v11/gate_d3.json: where the realistic cells sit
+python -m scripts.make_regime_configs --realistic-k k050     # configs/regime/*.yaml (k050 because gate D3 fired)
+python -m scripts.make_regime_configs --check                # exit 1 if the committed files drift
+```
+
+The recoverability indices at K0 and K1, the kinetic subset of the augmented
+estimators and PINN-theta, and the sensor-variant choice are computed before any
+estimator of the registered grid is scored:
+
+```bash
+python -m scripts.recoverability --data-dir results/raw --data-dir results/raw_k100 --sigma 0.10 --prior results/v11/anchors/k100/As.npz --out results/v11/analysis
+python -m scripts.recoverability --select-kinetics --data-dir results/raw --sigma 0.10 --prior results/v11/anchors/k000/As.npz --out results/v11/analysis
+python -m scripts.recoverability --sensor-confirmation results/v11/analysis/recoverability_k100.json --out results/v11/analysis
+```
+
+Render the registration and tag it; from here on the frozen files are checked
+by every run script:
+
+```bash
+python -m scripts.write_prereg               # PREREGISTRATION.md from scripts/prereg_template.md
+git tag v1.1.0-prereg
+```
+
+### 12.4 GPU runs (PINN and LSTM)
+
+Smoke runs, the determinism and concurrency checks, then the core phases E4–E7
+and the sensor confirmation E3 (seven cells, three seeds; one `scripts.run_all`
+subprocess per job, `--resume`, under the budget guard of
+`results/v11/gpu_ledger.csv`):
+
+```bash
+python -m scripts.run_core --phase smoke-pair --workers 2
+python -m scripts.run_core --phase determinism
+python -m scripts.run_core --phase smoke
+python -m scripts.smoke_check
+python -m scripts.concurrency_check
+python -m scripts.run_core --phase E4 E5 E6 E7 E3 --list
+python -m scripts.run_core --phase E4 E5 E6 E7 E3 --workers 2
+python -m scripts.check_core                 # results/v11/core_status.json
+python -m scripts.gpu_ledger total
+```
+
+On the reference laptop one seed took 10–16 min; the 39 runs took about a day
+with two workers.
+
+### 12.5 The estimator grid (CPU)
+
+All families of Section 6.2 of the registration (1068 estimator runs) and the
+reference rows (957 runs). The noise tuning is repeated in every cell and
+dominates the time: about two days with 12 workers on the reference laptop.
+
+```bash
+python -m scripts.observer_grid write --stage grid
+python -m scripts.observer_grid count --stage grid
+python -m scripts.observer_grid run --stage grid --workers 12
+python -m scripts.observer_grid baselines --stage grid --workers 12
+python -m scripts.observer_grid status --stage grid          # results/v11/observer_status_grid.json
+```
+
+### 12.6 Scoring, hypotheses, tables and figures
+
+```bash
+python -m scripts.recoverability --data-dir results/raw_k050 --sigma 0.10 --prior results/v11/anchors/k050/As.npz --out results/v11/analysis
+python -m scripts.regime_map score --root results/v11 --legacy-lstm results/runs
+python -m scripts.recoverability_validation --cells configs/analysis/recoverability_cells.yaml --out results/v11/analysis/validation
+python -m scripts.v11_tables --root results/v11
+python -m scripts.v11_figures --root results/v11
+python -m scripts.regime_map plot --root results/v11
+```
+
+`regime_map score` writes `results/v11/regime_table.{json,csv,md}` (every
+comparison, crossover, parameter-recovery and realisation-spread number) and
+`regime_states.json` (per-tank, per-component errors); it also evaluates H1–H5
+and H7 as registered, and `recoverability_validation` evaluates H6.
+`v11_tables` writes the manuscript tables and `results/v11/numbers.json`, the
+registry every number in the manuscript is read from. `v11_figures` and
+`regime_map plot` draw Figures 2–6 and the Supporting Information maps, one
+print-size file per panel, and refuse a panel whose text is too small, cut off
+or colliding (`scripts/figure_layout.py`).
+
+Per-component tables, heatmaps and trajectories of the two cells shown in the
+manuscript, the seed bands of the realistic cell, and the residual and
+derivative diagnostics:
+
+```bash
+python -m scripts.component_results --runs results/v11/pinn/k000_ie_a0_seed0 results/v11/pinn/k000_ie_a0_seed1 results/v11/pinn/k000_ie_a0_seed2 results/v11/observers/k000_ie_a0 results/v11/baselines/k000_ie_a0 --data-dir results/raw --sigmas 0.10 --models cl_pinn pinn eks persistence ode_openloop_reduced --heat-models cl_pinn eks --table-models cl_pinn pinn eks persistence ode_openloop_reduced --window train --out-dir results/v11 --tag _k000_ie_a0_R0 --figure-layout split --cell-label "K0 Ie A0" --trackb-row median-of-means
+python -m scripts.component_results --runs results/v11/pinn/k050_ic_as_seed0 results/v11/pinn/k050_ic_as_seed1 results/v11/pinn/k050_ic_as_seed2 results/v11/observers/k050_ic_as results/v11/baselines/k050_ic_as --data-dir results/raw_k050 --sigmas 0.10 --models cl_pinn eks persistence ode_openloop_reduced --heat-models cl_pinn eks --table-models cl_pinn eks persistence ode_openloop_reduced --window train --out-dir results/v11 --tag _k050_ic_as_R0 --figure-layout split --cell-label "K.5 Ic As" --trackb-row median-of-means
+python -m scripts.seed_bands --runs results/v11/pinn/k050_ic_as_seed0 results/v11/pinn/k050_ic_as_seed1 results/v11/pinn/k050_ic_as_seed2 --data-dir results/raw_k050 --out-dir results/v11 --tag _k050_ic_as --figure-set train --figure-metric track_b_nrmse_fixed --figure-layout column --cell-label "K.5 Ic As"
+python -m scripts.residual_diagnostic --root results/v11/pinn --out results/v11/residual_diagnostic.json
+python -m scripts.audit_derivative           # results/v11/derivative_audit.{json,csv}: the v1.0 checkpoints under the total derivative
+python -m scripts.reanalyse_v1               # results/v11/reanalysis_v1.json: the v1.0 runs on the v1.1 windows
+```
+
+**Pass criteria.** `verify_bsm1_truth` and `verify_truth_identity` report PASS;
+`make_regime_configs --check` exits 0; `check_core` lists no failed core run;
+`observer_grid status --stage grid` reports every planned run finished;
+`regime_map score` prints the outcome of every hypothesis; and
+`python -m pytest tests -q` passes (the fingerprint test in
+`tests/test_total_derivative.py` is a bitwise check that depends on the
+installed torch and numpy builds and on the processor mask; see its docstring).
+
+---
+
 ## Frequently used helpers
 
 Run a single training configuration directly:
@@ -441,3 +632,8 @@ and `asm1.xlsx` are never modified by any step, they are read-only sources.
 ```bash
 rm -rf results/raw results/runs results/runs_seed1 results/runs_seed2 results/runs_ablation results/runs_icmask results/runs_flowonly results/figures results/benchmark.* results/seed_bands.json results/component_table.*
 ```
+
+The v1.1 study adds `results/raw_k*`, `results/raw_rand` and `results/v11/`;
+removing those and rerunning step 12 regenerates the manuscript's numbers,
+tables and figures (the pre-registration probes under `results/v11/predating`
+are tracked and stay).
