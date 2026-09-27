@@ -194,7 +194,7 @@ manifest.json                                       provenance
   A larger value means a leak in the settler mass balance.
 - **Plant-wide closure** is only **reported**, not gated: because of the BSM1
   eq. 46 settler approximation, about 1e-3 may appear on the nitrogen side.
-  Expected behaviour, not an error.
+  Expected behavior, not an error.
 - **Mean flow** very close to 18 446; the range close to the 10 000–32 000 of
   BSM1 Figure 3 (not exact: mean and max/min ratio are pinned, absolute
   extremes are approximate by design).
@@ -365,7 +365,7 @@ separate `out_dir` (run ids do not carry the seed, so a shared `out_dir` would
 overwrite the seed-0 sweep).
 
 Non-learned reference predictors (persistence of the t = 0 state, open-loop ODE
-integration); materialised as ordinary run directories under `results/runs/`:
+integration); materialized as ordinary run directories under `results/runs/`:
 
 ```bash
 python -m scripts.make_baselines
@@ -444,7 +444,7 @@ python -m scripts.generate_data --truth-preset graded --alpha 0.75 --constant-fr
 python -m scripts.generate_data --truth-preset bsm1_15c           --constant-from nominal --candidate-channels --out results/raw_k100
 ```
 
-Nine further noise realisations at sigma 0.10 for the two realisation cells, the
+Nine further noise realizations at sigma 0.10 for the two realization cells, the
 off-steady start (M0') and the fifty random-mismatch facilities:
 
 ```bash
@@ -570,7 +570,7 @@ python -m scripts.regime_map plot --root results/v11
 ```
 
 `regime_map score` writes `results/v11/regime_table.{json,csv,md}` (every
-comparison, crossover, parameter-recovery and realisation-spread number) and
+comparison, crossover, parameter-recovery and realization-spread number) and
 `regime_states.json` (per-tank, per-component errors); it also evaluates H1–H5
 and H7 as registered, and `recoverability_validation` evaluates H6.
 `v11_tables` writes the manuscript tables and `results/v11/numbers.json`, the
