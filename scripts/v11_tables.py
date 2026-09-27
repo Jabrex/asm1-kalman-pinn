@@ -230,7 +230,7 @@ def si_components(table: dict[str, Any], sigma: float, window: str) -> dict[str,
     return {"headers": ["Cell", "Estimator", "n", "label"] + list(TRACK_B), "rows": rows,
             "label": "tab:si-components-%s" % window,
             "caption": "Per-component NRMSE (fixed R0 range), window %s, sigma %.2f, median over the n seeds "
-                       "(two-seed and one-seed PINN rows labelled, Section 9)." % (window, sigma),
+                       "(two-seed and one-seed PINN rows labeled, registration Section 9)." % (window, sigma),
             "sources": ["results/v11/regime_table.json"]}
 
 
@@ -252,10 +252,10 @@ def si_realisations(table: dict[str, Any]) -> dict[str, Any]:
     rows = [[cell_label(s["cell"]), s["sigma"], s["estimator"], s["window"], s.get("realisation0"), s["n"], s["median"],
              s["p25"], s["p75"], s["min"], s["max"], s.get("realisation0_outside_range")]
             for s in table["realisation_spread"]]
-    return {"headers": ["Cell", "sigma", "Estimator", "Window", "realisation 0", "n (1-9)", "median", "p25", "p75",
+    return {"headers": ["Cell", "sigma", "Estimator", "Window", "realization 0", "n (1-9)", "median", "p25", "p75",
                         "min", "max", "r0 outside"],
             "rows": rows, "label": "tab:si-realisations",
-            "caption": "Noise realisation 0 (the registered comparison) next to the spread over realisations 1-9, "
+            "caption": "Noise realization 0 (the registered comparison) next to the spread over realizations 1-9, "
                        "which is reported beside it and never pooled with it (Sections 2 and 9).",
             "sources": ["results/v11/regime_table.json"]}
 
@@ -356,7 +356,7 @@ def si_hypotheses(table: dict[str, Any], validation: dict[str, Any] | None) -> d
         rows.append(["H6", status, "EKS at %s: rho %s [%s, %s]; pass if rho >= 0.5 and the lower end > 0"
                      % (h6.get("cell"), fmt(h6.get("rho")), fmt(ci[0]), fmt(ci[1]))])
     rows.sort(key=lambda r: r[0])
-    return {"headers": ["Hypothesis", "Outcome", "Evidence (window R0, sigma 0.10, realisation 0)"], "rows": rows,
+    return {"headers": ["Hypothesis", "Outcome", "Evidence (window R0, sigma 0.10, realization 0)"], "rows": rows,
             "label": "tab:si-hypotheses",
             "caption": "Pre-registered hypotheses H1-H7 (PREREGISTRATION.md, Section 3) and their outcomes under the "
                        "rules of Section 9.",

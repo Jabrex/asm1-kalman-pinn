@@ -215,7 +215,7 @@ DARK_CLASSES = ("sensor-recoverable", "anchor-carried")
 WINDOW_TEXT = {"R0": "days 0\u201312", "R2": "days 2\u201312", "F": "days 12\u201314"}
 MINUS = "\u2212"
 #: One label for the primary metric in every figure.
-METRIC_LABEL = "Track B NRMSE (fixed R0 range)"
+METRIC_LABEL = "Never-measured NRMSE (fixed R0 range)"
 #: Pre-registered class rules (PREREGISTRATION.md Section 7), shown in the Fig. 2a legend.
 CLASS_RULE = {"sensor-recoverable": "IG \u2265 0.5", "partly recoverable": "all other states",
               "forcing-slaved": "forcing share > 0.5, \u03c4 < 1 d", "anchor-carried": "\u03c4 > 6 d, IG < 0.5"}
@@ -281,7 +281,7 @@ def fig2_recoverability(rec: dict[str, Any], states: dict[str, Any], validation:
     ax.set_xticklabels([_component(c) for c in TRACK_B])
     ax.set_yticks(range(5))
     ax.set_yticklabels(["tank %d" % (k + 1) for k in range(5)])
-    ax.set_title("(a) Recoverability class (colour) and information gain (number), %s" % rec_label(rec), loc="left")
+    ax.set_title("(a) Recoverability class (color) and information gain (number), %s" % rec_label(rec), loc="left")
     handles = [plt.Rectangle((0, 0), 1, 1, color=CLASS_COLOURS[c]) for c in CLASSES]
     present = {c for row in classes for c in row}
     fig.legend(handles, ["%s (%s%s)" % (c, CLASS_RULE[c], "" if c in present else "; none") for c in CLASSES],
@@ -470,7 +470,7 @@ def fig4_mismatch(table: dict[str, Any], fig_dir: Path, sigma: float, influent: 
             top.set_xlabel("crossover $\\alpha^*$", labelpad=3)
         ax.set_xlim(-0.06, 1.06)
         ax.set_ylim(0.0, ymax * 1.06)
-        ax.set_xlabel("kinetic mismatch $\\alpha$\n(0 = vault 20 \u00b0C, 1 = BSM1 15 \u00b0C)")
+        ax.set_xlabel("kinetic mismatch $\\alpha$\n(0 = textbook set, 1 = BSM1 15 \u00b0C set)")
         ax.set_ylabel(METRIC_LABEL)
         ax.set_title("(%s) Window %s (%s), %s %s" % (letter, window, WINDOW_TEXT[window], influent.capitalize(),
                                                      anchor.capitalize()), loc="left")
@@ -488,7 +488,7 @@ def fig4_mismatch(table: dict[str, Any], fig_dir: Path, sigma: float, influent: 
     handles += [Line2D([], [], ls="none", marker="s", ms=4, color="0.3", mfc="white",
                        label="open marker: fewer than three seeds"),
                 Line2D([], [], ls=":", lw=0.9, color="0.3",
-                       label="$\\alpha^*$: open loop or EKS crosses persistence (tick in its colour)")]
+                       label="$\\alpha^*$: open loop or EKS crosses persistence (tick in its color)")]
     plotted["files"] += [p.name for p in _legend_file(handles, fig_dir / "fig4_legend.png", ncol=2)]
 
     recovery = [p for p in table["parameter_recovery"] if p["cell"] == recovery_cell and abs(p["sigma"] - sigma) < 1e-9

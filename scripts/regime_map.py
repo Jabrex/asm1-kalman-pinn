@@ -78,7 +78,7 @@ PRETTY = {
     "persistence": "Persistence",
     "ode_openloop_reduced": "Open loop (info-matched)",
     "ode_openloop_full": "Open loop (structure-rich)*",
-    "lstm_v10": "LSTM (v1.0)",
+    "lstm_v10": "LSTM (earlier run)",
     "lstm": "LSTM",
     "pinn": "PINN, single-stage",
     "cl_pinn": "CL-PINN",
@@ -122,8 +122,8 @@ RULE = (
     "compared seed by seed (pairs by seed number); against the multi-seed LSTM every seed must lie "
     "below every LSTM seed. Otherwise the outcome is a tie. A diverged or failed run loses to every "
     "comparator; a comparison whose comparator diverged or failed is not decided. Observers are "
-    "compared on the noise realisation the PINN was trained on (r = 0); rows marked * use more "
-    "information and are never winners; two-seed and one-seed PINN rows are labelled and do not "
+    "compared on the noise realization the PINN was trained on (r = 0); rows marked * use more "
+    "information and are never winners; two-seed and one-seed PINN rows are labeled and do not "
     "decide H1-H7."
 )
 #: Hypothesis settings (Section 3): window R0, sigma 0.10, realisation 0, the primary metric.
@@ -1016,7 +1016,7 @@ def markdown(table: dict[str, Any]) -> str:
                 lines.append("| %s | %s |" % (c, " | ".join(cells_txt)))
             lines.append("")
     titles = {"deciding": "Win / tie / loss counts over cells (three-seed PINN rows, registered rules)",
-              "labelled": "Labelled comparisons (two-seed or one-seed PINN rows, or the added LSTM rule); they do "
+              "labelled": "Labeled comparisons (two-seed or one-seed PINN rows, or the added LSTM rule); they do "
                           "not decide H1-H7",
               "reference": "Against more-information rows (* ; outcome the rule would give, never a win for them)"}
     for kind in ("deciding", "labelled", "reference"):
@@ -1045,7 +1045,7 @@ def markdown(table: dict[str, Any]) -> str:
                                                               c["estimator"], _fmt(c["alpha_star"]), c["status"]))
     hyp = table.get("hypotheses") or {}
     if hyp:
-        lines += ["", "## Pre-registered hypotheses (window %s, sigma %.2f, realisation 0)"
+        lines += ["", "## Pre-registered hypotheses (window %s, sigma %.2f, realization 0)"
                   % (hyp.get("window", H_WINDOW), hyp.get("sigma", H_SIGMA)), "",
                   "| hypothesis | status | detail |", "| --- | --- | --- |"]
         for name in sorted(k for k in hyp if re.fullmatch(r"H\d", k)):
@@ -1265,18 +1265,18 @@ def plot_heatmap(table: dict[str, Any], png_path: Path, sigma: float = 0.10, win
             note = "Outlined: best in the row. \u03c3 = %.2f." % sigma
         else:
             note = ("Numbers: skill = 1 \u2212 E/E$_{\\mathrm{persistence}}$ against anchor-aware persistence "
-                    "(\u03c3 = %.2f, noise realisation 0); colours clipped at \u22121. Outlined: best entry of the "
+                    "(\u03c3 = %.2f, noise realization 0); colors clipped at \u22121. Outlined: best entry of the "
                     "row on window %s%s. * = more information, never a winner." % (
                         sigma, window, " (tied entries all outlined)" if "tie" in used else ""))
             if "\u2020" in used:
-                note += " \u2020 = PINN row with one or two seeds (labelled; pre-registration Section 9)."
+                note += " \u2020 = PINN row with one or two seeds (labeled; registration, Section S8)."
             if "\u2021" in used:
-                note += " \u2021 = diverged run (pre-registration Section 5), never a winner."
+                note += " \u2021 = diverged run (registration, Section S8), never a winner."
             if "fail" in used:
                 note += " fail = failed or diverged run."
             if "n/a" in used:
                 note += " n/a = no score."
-            note += " Grey: not run in this cell."
+            note += " Gray: not run in this cell."
         fig.supxlabel(wrap(note, size[0] * 0.96), fontsize=7)
         png_path = Path(png_path)
         png_path.parent.mkdir(parents=True, exist_ok=True)

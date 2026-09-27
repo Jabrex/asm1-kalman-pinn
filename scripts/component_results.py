@@ -168,7 +168,7 @@ def split_heatmaps(heat: dict[str, np.ndarray], models: list[str], components: t
                          % (SPLIT_TITLES.get(model, model), ", " + cell_label if cell_label else "",
                             SPLIT_WINDOW_TEXT[window], sigma), loc="left")
             cbar = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
-            cbar.set_label("NRMSE,\ncolour capped at %.1f" % vmax)
+            cbar.set_label("NRMSE,\ncolor capped at %.1f" % vmax)
             try:
                 written += save_checked(fig, fig_dir / ("per_tank_heatmap%s_%s.png" % (file_tag, model)), save_figure)
             finally:
